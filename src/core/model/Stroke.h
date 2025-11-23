@@ -194,13 +194,13 @@ public:
     /**
      * @brief Get the motion recording associated with this stroke
      */
-    class MotionRecording* getMotionRecording() const;
+    MotionRecording* getMotionRecording() const;
 
     /**
      * @brief Set motion recording for this stroke
      * @param recording The motion recording data (ownership is transferred)
      */
-    void setMotionRecording(std::unique_ptr<class MotionRecording> recording);
+    void setMotionRecording(std::unique_ptr<MotionRecording> recording);
 
     /**
      * @brief Check if this stroke has motion recording data
@@ -247,5 +247,5 @@ private:
      * Optional motion recording data for this stroke
      * This captures the full drawing motion with timestamps
      */
-    std::unique_ptr<class MotionRecording> motionRecording = nullptr;
+    std::unique_ptr<MotionRecording> motionRecording = nullptr;
 };
