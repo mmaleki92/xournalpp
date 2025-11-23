@@ -17,6 +17,7 @@
 #include "model/AudioElement.h"                   // for AudioElement
 #include "model/Element.h"                        // for Element, ELEMENT_ST...
 #include "model/LineStyle.h"                      // for LineStyle
+#include "model/MotionRecording.h"                // for MotionRecording
 #include "model/Point.h"                          // for Point, Point::NO_PR...
 #include "util/Assert.h"                          // for xoj_assert
 #include "util/BasePointerIterator.h"             // for BasePointerIterator
@@ -28,10 +29,11 @@
 #include "util/Rectangle.h"                       // for Rectangle
 #include "util/SmallVector.h"                     // for SmallVector
 #include "util/TinyVector.h"                      // for TinyVector
-#include "util/i18n.h"                            // for FC, FORMAT_STR
-#include "util/serdesstream.h"                    // for serdes_stream
-#include "util/serializing/ObjectInputStream.h"   // for ObjectInputStream
-#include "util/serializing/ObjectOutputStream.h"  // for ObjectOutputStream
+#include "util/i18n.h"                                       // for FC, FORMAT_STR
+#include "util/serdesstream.h"                               // for serdes_stream
+#include "util/serializing/InputStreamException.h"           // for InputStreamException
+#include "util/serializing/ObjectInputStream.h"              // for ObjectInputStream
+#include "util/serializing/ObjectOutputStream.h"             // for ObjectOutputStream
 
 #include "PathParameter.h"  // for PathParameter
 #include "config-debug.h"   // for ENABLE_ERASER_DEBUG
@@ -108,6 +110,10 @@ auto Stroke::cloneStroke() const -> std::unique_ptr<Stroke> {
     s->Element::height = this->Element::height;
     s->snappedBounds = this->snappedBounds;
     s->sizeCalculated = this->sizeCalculated;
+    // Clone motion recording if present
+    if (this->motionRecording) {
+        s->motionRecording = std::make_unique<MotionRecording>(*this->motionRecording);
+    }
     return s;
 }
 
@@ -183,6 +189,12 @@ void Stroke::serialize(ObjectOutputStream& out) const {
 
     this->lineStyle.serialize(out);
 
+    // Write motion recording if present (optional, for backward compatibility)
+    out.writeBool(this->motionRecording != nullptr);
+    if (this->motionRecording) {
+        this->motionRecording->serialize(out);
+    }
+
     out.endObject();
 }
 
@@ -201,6 +213,22 @@ void Stroke::readSerialized(ObjectInputStream& in) {
 
     in.readData(this->points);
     this->lineStyle.readSerialized(in);
+
+    // Read motion recording if present (optional, for backward compatibility)
+    // The serialization format includes a boolean flag first, so we just need
+    // to read it. If the file is from an old version, the boolean will be missing
+    // and readBool will throw InputStreamException, which we catch gracefully.
+    try {
+        bool hasMotionRecording = false;
+        in.readBool(hasMotionRecording);
+        if (hasMotionRecording) {
+            this->motionRecording = std::make_unique<MotionRecording>();
+            this->motionRecording->readSerialized(in);
+        }
+    } catch (const InputStreamException&) {
+        // Old format without motion recording - this is expected for backward compatibility
+        this->motionRecording = nullptr;
+    }
 
     in.endObject();
 }
@@ -872,4 +900,14 @@ void Stroke::debugPrint() const {
     }
 
     g_message("\n");
+}
+
+auto Stroke::getMotionRecording() const -> MotionRecording* { return this->motionRecording.get(); }
+
+void Stroke::setMotionRecording(std::unique_ptr<MotionRecording> recording) {
+    this->motionRecording = std::move(recording);
+}
+
+auto Stroke::hasMotionRecording() const -> bool {
+    return this->motionRecording && this->motionRecording->hasMotionData();
 }
