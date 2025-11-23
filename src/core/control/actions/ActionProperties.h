@@ -24,6 +24,7 @@
 #include "model/Font.h"
 #include "model/StrokeStyle.h"
 #include "model/XojPage.h"
+#include "motion/MotionExportController.h"
 #include "plugin/PluginController.h"
 #include "util/Assert.h"
 #include "util/PopupWindowWrapper.h"
@@ -897,7 +898,8 @@ struct ActionProperties<Action::MOTION_EXPORT_START> {
         bool success = motionController->startExport();
         if (success) {
             Util::execInUiThread([win = ctrl->getGtkWindow()]() {
-                XojMsgBox::showInfoToUser(win, _("Motion export completed successfully!"));
+                // Use showMessageToUser with GTK_MESSAGE_INFO instead of showInfoToUser
+                XojMsgBox::showMessageToUser(win, _("Motion export completed successfully!"), GTK_MESSAGE_INFO);
             });
         } else {
             Util::execInUiThread([win = ctrl->getGtkWindow()]() {
