@@ -18,6 +18,7 @@
 #include "model/Font.h"                        // for XojFont
 #include "model/Image.h"                       // for Image
 #include "model/Layer.h"                       // for Layer
+#include "model/MotionRecording.h"             // for MotionRecording
 #include "model/PageType.h"                    // for PageType, PageTypeFormat
 #include "model/Point.h"                       // for Point
 #include "model/Stroke.h"                      // for Stroke, StrokeCapStyle
@@ -638,6 +639,52 @@ void LoadHandler::parseStroke() {
         stroke->setToolType(StrokeTool::HIGHLIGHTER);
     } else {
         g_warning("%s", FC(_F("Unknown stroke type: \"{1}\", assuming pen") % tool));
+    }
+
+    // Load motion recording if present (optional, for backward compatibility)
+    const char* motionData = LoadHandlerHelper::getAttrib("motion", true, this);
+    if (motionData != nullptr && *motionData != '\0') {
+        auto motionRecording = std::make_unique<MotionRecording>();
+        
+        // Parse motion data: timestamp1,x1,y1,z1,isEraser1 timestamp2,x2,y2,z2,isEraser2 ...
+        const char* ptr = motionData;
+        while (*ptr != '\0') {
+            size_t timestamp = 0;
+            double x = 0.0, y = 0.0, z = 0.0;
+            int isEraser = 0;
+            
+            char* endPtr = nullptr;
+            timestamp = static_cast<size_t>(g_ascii_strtoull(ptr, &endPtr, 10));
+            if (endPtr == ptr || *endPtr != ',') break;
+            ptr = endPtr + 1;
+            
+            x = g_ascii_strtod(ptr, &endPtr);
+            if (endPtr == ptr || *endPtr != ',') break;
+            ptr = endPtr + 1;
+            
+            y = g_ascii_strtod(ptr, &endPtr);
+            if (endPtr == ptr || *endPtr != ',') break;
+            ptr = endPtr + 1;
+            
+            z = g_ascii_strtod(ptr, &endPtr);
+            if (endPtr == ptr || *endPtr != ',') break;
+            ptr = endPtr + 1;
+            
+            isEraser = static_cast<int>(g_ascii_strtoull(ptr, &endPtr, 10));
+            if (endPtr == ptr) break;
+            ptr = endPtr;
+            
+            // Skip whitespace
+            while (*ptr == ' ' || *ptr == '\t' || *ptr == '\n' || *ptr == '\r') {
+                ptr++;
+            }
+            
+            motionRecording->addMotionPoint(Point(x, y, z), timestamp, isEraser != 0);
+        }
+        
+        if (motionRecording->hasMotionData()) {
+            stroke->setMotionRecording(std::move(motionRecording));
+        }
     }
 
     /**

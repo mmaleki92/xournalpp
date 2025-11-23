@@ -23,6 +23,7 @@
 #include "model/Image.h"                       // for Image
 #include "model/Layer.h"                       // for Layer
 #include "model/LineStyle.h"                   // for LineStyle
+#include "model/MotionRecording.h"             // for MotionRecording
 #include "model/PageType.h"                    // for PageType
 #include "model/Point.h"                       // for Point
 #include "model/Stroke.h"                      // for Stroke, StrokeCapStyle
@@ -157,6 +158,30 @@ void SaveHandler::visitStrokeExtended(XmlPointNode* stroke, const Stroke* s) {
 
     if (s->getLineStyle().hasDashes()) {
         stroke->setAttrib("style", StrokeStyle::formatStyle(s->getLineStyle()));
+    }
+
+    // Export motion recording if present (for video rendering)
+    if (s->hasMotionRecording()) {
+        const auto* motionRec = s->getMotionRecording();
+        const auto& motionPoints = motionRec->getMotionPoints();
+        
+        // Store motion recording as a space-separated string of values
+        // Format: timestamp1,x1,y1,z1,isEraser1 timestamp2,x2,y2,z2,isEraser2 ...
+        std::string motionData;
+        for (const auto& mp : motionPoints) {
+            if (!motionData.empty()) {
+                motionData += " ";
+            }
+            motionData += std::to_string(mp.timestamp) + "," +
+                         std::to_string(mp.point.x) + "," +
+                         std::to_string(mp.point.y) + "," +
+                         std::to_string(mp.point.z) + "," +
+                         (mp.isEraser ? "1" : "0");
+        }
+        
+        if (!motionData.empty()) {
+            stroke->setAttrib("motion", motionData.c_str());
+        }
     }
 }
 

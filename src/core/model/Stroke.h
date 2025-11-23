@@ -22,6 +22,7 @@
 #include "Point.h"         // for Point
 
 class Element;
+class MotionRecording;
 class ObjectInputStream;
 class ObjectOutputStream;
 class ShapeContainer;
@@ -190,6 +191,22 @@ public:
 
     [[maybe_unused]] void debugPrint() const;
 
+    /**
+     * @brief Get the motion recording associated with this stroke
+     */
+    class MotionRecording* getMotionRecording() const;
+
+    /**
+     * @brief Set motion recording for this stroke
+     * @param recording The motion recording data (ownership is transferred)
+     */
+    void setMotionRecording(std::unique_ptr<class MotionRecording> recording);
+
+    /**
+     * @brief Check if this stroke has motion recording data
+     */
+    bool hasMotionRecording() const;
+
 public:
     // Serialize interface
     void serialize(ObjectOutputStream& out) const override;
@@ -225,4 +242,10 @@ private:
     int fill = -1;
 
     StrokeCapStyle capStyle = StrokeCapStyle::ROUND;
+
+    /**
+     * Optional motion recording data for this stroke
+     * This captures the full drawing motion with timestamps
+     */
+    std::unique_ptr<class MotionRecording> motionRecording = nullptr;
 };

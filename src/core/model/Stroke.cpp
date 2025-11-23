@@ -17,6 +17,7 @@
 #include "model/AudioElement.h"                   // for AudioElement
 #include "model/Element.h"                        // for Element, ELEMENT_ST...
 #include "model/LineStyle.h"                      // for LineStyle
+#include "model/MotionRecording.h"                // for MotionRecording
 #include "model/Point.h"                          // for Point, Point::NO_PR...
 #include "util/Assert.h"                          // for xoj_assert
 #include "util/BasePointerIterator.h"             // for BasePointerIterator
@@ -108,6 +109,10 @@ auto Stroke::cloneStroke() const -> std::unique_ptr<Stroke> {
     s->Element::height = this->Element::height;
     s->snappedBounds = this->snappedBounds;
     s->sizeCalculated = this->sizeCalculated;
+    // Clone motion recording if present
+    if (this->motionRecording) {
+        s->motionRecording = std::make_unique<MotionRecording>(*this->motionRecording);
+    }
     return s;
 }
 
@@ -183,6 +188,12 @@ void Stroke::serialize(ObjectOutputStream& out) const {
 
     this->lineStyle.serialize(out);
 
+    // Write motion recording if present (optional, for backward compatibility)
+    out.writeBool(this->motionRecording != nullptr);
+    if (this->motionRecording) {
+        this->motionRecording->serialize(out);
+    }
+
     out.endObject();
 }
 
@@ -201,6 +212,20 @@ void Stroke::readSerialized(ObjectInputStream& in) {
 
     in.readData(this->points);
     this->lineStyle.readSerialized(in);
+
+    // Read motion recording if present (optional, for backward compatibility)
+    bool hasMotionRecording = false;
+    // Try to read motion recording flag - if it fails, it's an old file format
+    try {
+        in.readBool(hasMotionRecording);
+        if (hasMotionRecording) {
+            this->motionRecording = std::make_unique<MotionRecording>();
+            this->motionRecording->readSerialized(in);
+        }
+    } catch (...) {
+        // Old format without motion recording - ignore
+        this->motionRecording = nullptr;
+    }
 
     in.endObject();
 }
@@ -872,4 +897,14 @@ void Stroke::debugPrint() const {
     }
 
     g_message("\n");
+}
+
+auto Stroke::getMotionRecording() const -> MotionRecording* { return this->motionRecording.get(); }
+
+void Stroke::setMotionRecording(std::unique_ptr<MotionRecording> recording) {
+    this->motionRecording = std::move(recording);
+}
+
+auto Stroke::hasMotionRecording() const -> bool {
+    return this->motionRecording && this->motionRecording->hasMotionData();
 }
