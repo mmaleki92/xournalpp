@@ -889,11 +889,12 @@ struct ActionProperties<Action::AUDIO_STOP_PLAYBACK> {
 template <>
 struct ActionProperties<Action::MOTION_EXPORT_START> {
     static void callback(GSimpleAction*, GVariant*, Control* ctrl) {
-        if (!ctrl->motionExportController) {
+        auto* motionController = ctrl->getMotionExportController();
+        if (!motionController) {
             g_warning("Motion export controller not available");
             return;
         }
-        bool success = ctrl->getMotionExportController()->startExport();
+        bool success = motionController->startExport();
         if (success) {
             Util::execInUiThread([win = ctrl->getGtkWindow()]() {
                 XojMsgBox::showInfoToUser(win, _("Motion export completed successfully!"));
