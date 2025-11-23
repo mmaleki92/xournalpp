@@ -219,8 +219,7 @@ void Stroke::readSerialized(ObjectInputStream& in) {
     // to read it. If the file is from an old version, the boolean will be missing
     // and readBool will throw InputStreamException, which we catch gracefully.
     try {
-        bool hasMotionRecording = false;
-        in.readBool(hasMotionRecording);
+        bool hasMotionRecording = in.readBool();
         if (hasMotionRecording) {
             this->motionRecording = std::make_unique<MotionRecording>();
             this->motionRecording->readSerialized(in);

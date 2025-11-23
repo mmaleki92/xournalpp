@@ -42,31 +42,28 @@ auto MotionRecording::getEndTimestamp() const -> size_t {
 }
 
 void MotionRecording::serialize(ObjectOutputStream& out) const {
-    out.writeUInt(motionPoints.size());
+    out.writeUInt(static_cast<uint32_t>(motionPoints.size()));
     for (const auto& mp : motionPoints) {
         out.writeDouble(mp.point.x);
         out.writeDouble(mp.point.y);
         out.writeDouble(mp.point.z);
-        out.writeUInt(mp.timestamp);
+        out.writeUInt(static_cast<uint32_t>(mp.timestamp));
         out.writeBool(mp.isEraser);
     }
 }
 
 void MotionRecording::readSerialized(ObjectInputStream& in) {
     motionPoints.clear();
-    size_t count = 0;
-    in.readUInt(count);
+    uint32_t count = in.readUInt();
     motionPoints.reserve(count);
 
-    for (size_t i = 0; i < count; ++i) {
+    for (uint32_t i = 0; i < count; ++i) {
         Point point;
-        in.readDouble(point.x);
-        in.readDouble(point.y);
-        in.readDouble(point.z);
-        size_t timestamp = 0;
-        in.readUInt(timestamp);
-        bool isEraser = false;
-        in.readBool(isEraser);
+        point.x = in.readDouble();
+        point.y = in.readDouble();
+        point.z = in.readDouble();
+        size_t timestamp = static_cast<size_t>(in.readUInt());
+        bool isEraser = in.readBool();
         motionPoints.emplace_back(point, timestamp, isEraser);
     }
 }

@@ -34,6 +34,7 @@ public:
     void writeUInt(uint32_t u);
     void writeDouble(double d);
     void writeSizeT(size_t st);
+    void writeBool(bool b);
     void writeString(const char* str);
     void writeString(std::string_view s);
 

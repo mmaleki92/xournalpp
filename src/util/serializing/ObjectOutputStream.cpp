@@ -48,6 +48,11 @@ void ObjectOutputStream::writeSizeT(size_t st) {
     this->encoder->addData(&st, sizeof(size_t));
 }
 
+void ObjectOutputStream::writeBool(bool b) {
+    this->encoder->addStr("_o");
+    this->encoder->addData(&b, sizeof(bool));
+}
+
 void ObjectOutputStream::writeString(const char* str) { writeString(std::string_view(str)); }
 
 void ObjectOutputStream::writeString(std::string_view s) {
