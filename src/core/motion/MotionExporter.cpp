@@ -62,11 +62,11 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
             continue;
         }
 
-        auto layers = page->getLayers();
+        const auto& layers = page->getLayers();
         for (auto* layer : layers) {
-            auto elements = layer->getElements();
-            for (auto* element : elements) {
-                if (auto* stroke = dynamic_cast<Stroke*>(element)) {
+            const auto& elements = layer->getElements();
+            for (const auto& element : elements) {
+                if (auto* stroke = dynamic_cast<Stroke*>(element.get())) {
                     if (stroke->hasMotionRecording()) {
                         auto* motion = stroke->getMotionRecording();
                         totalMotionPoints += motion->getMotionPointCount();
@@ -120,11 +120,11 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
             metadataFile << "      \"strokes\": [\n";
 
             bool firstStroke = true;
-            auto layers = page->getLayers();
+            const auto& layers = page->getLayers();
             for (auto* layer : layers) {
-                auto elements = layer->getElements();
-                for (auto* element : elements) {
-                    if (auto* stroke = dynamic_cast<Stroke*>(element)) {
+                const auto& elements = layer->getElements();
+                for (const auto& element : elements) {
+                    if (auto* stroke = dynamic_cast<Stroke*>(element.get())) {
                         if (stroke->hasMotionRecording()) {
                             if (!firstStroke) {
                                 metadataFile << ",\n";
