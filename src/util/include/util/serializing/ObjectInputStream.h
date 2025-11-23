@@ -40,6 +40,7 @@ public:
     uint32_t readUInt();
     double readDouble();
     size_t readSizeT();
+    bool readBool();
     std::string readString();
 
     template <typename T>

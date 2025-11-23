@@ -105,6 +105,11 @@ auto ObjectInputStream::readSizeT() -> size_t {
     return readType<size_t>();
 }
 
+auto ObjectInputStream::readBool() -> bool {
+    checkType('o');
+    return readType<bool>();
+}
+
 auto ObjectInputStream::readString() -> std::string {
     checkType('s');
 
@@ -181,6 +186,8 @@ auto ObjectInputStream::getType(char type) -> std::string {
         ret = "Floating point";
     } else if (type == 'l') {
         ret = "Size";
+    } else if (type == 'o') {
+        ret = "Boolean";
     } else if (type == 's') {
         ret = "String";
     } else if (type == 'b') {
