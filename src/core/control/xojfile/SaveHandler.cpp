@@ -3,6 +3,7 @@
 #include <cinttypes>   // for PRIx32
 #include <cstdint>     // for uint32_t
 #include <cstdio>      // for sprintf, size_t
+#include <sstream>     // for ostringstream
 
 #include <cairo.h>                  // for cairo_surface_t
 #include <gdk-pixbuf/gdk-pixbuf.h>  // for gdk_pixbuf_save
@@ -167,18 +168,22 @@ void SaveHandler::visitStrokeExtended(XmlPointNode* stroke, const Stroke* s) {
         
         // Store motion recording as a space-separated string of values
         // Format: timestamp1,x1,y1,z1,isEraser1 timestamp2,x2,y2,z2,isEraser2 ...
-        std::string motionData;
+        // Use ostringstream for efficient string building
+        std::ostringstream motionStream;
+        bool first = true;
         for (const auto& mp : motionPoints) {
-            if (!motionData.empty()) {
-                motionData += " ";
+            if (!first) {
+                motionStream << " ";
             }
-            motionData += std::to_string(mp.timestamp) + "," +
-                         std::to_string(mp.point.x) + "," +
-                         std::to_string(mp.point.y) + "," +
-                         std::to_string(mp.point.z) + "," +
-                         (mp.isEraser ? "1" : "0");
+            first = false;
+            motionStream << mp.timestamp << "," 
+                        << mp.point.x << "," 
+                        << mp.point.y << "," 
+                        << mp.point.z << "," 
+                        << (mp.isEraser ? "1" : "0");
         }
         
+        std::string motionData = motionStream.str();
         if (!motionData.empty()) {
             stroke->setAttrib("motion", motionData.c_str());
         }

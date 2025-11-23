@@ -29,10 +29,11 @@
 #include "util/Rectangle.h"                       // for Rectangle
 #include "util/SmallVector.h"                     // for SmallVector
 #include "util/TinyVector.h"                      // for TinyVector
-#include "util/i18n.h"                            // for FC, FORMAT_STR
-#include "util/serdesstream.h"                    // for serdes_stream
-#include "util/serializing/ObjectInputStream.h"   // for ObjectInputStream
-#include "util/serializing/ObjectOutputStream.h"  // for ObjectOutputStream
+#include "util/i18n.h"                                       // for FC, FORMAT_STR
+#include "util/serdesstream.h"                               // for serdes_stream
+#include "util/serializing/InputStreamException.h"           // for InputStreamException
+#include "util/serializing/ObjectInputStream.h"              // for ObjectInputStream
+#include "util/serializing/ObjectOutputStream.h"             // for ObjectOutputStream
 
 #include "PathParameter.h"  // for PathParameter
 #include "config-debug.h"   // for ENABLE_ERASER_DEBUG
@@ -214,16 +215,18 @@ void Stroke::readSerialized(ObjectInputStream& in) {
     this->lineStyle.readSerialized(in);
 
     // Read motion recording if present (optional, for backward compatibility)
-    bool hasMotionRecording = false;
-    // Try to read motion recording flag - if it fails, it's an old file format
+    // The serialization format includes a boolean flag first, so we just need
+    // to read it. If the file is from an old version, the boolean will be missing
+    // and readBool will throw InputStreamException, which we catch gracefully.
     try {
+        bool hasMotionRecording = false;
         in.readBool(hasMotionRecording);
         if (hasMotionRecording) {
             this->motionRecording = std::make_unique<MotionRecording>();
             this->motionRecording->readSerialized(in);
         }
-    } catch (...) {
-        // Old format without motion recording - ignore
+    } catch (const InputStreamException&) {
+        // Old format without motion recording - this is expected for backward compatibility
         this->motionRecording = nullptr;
     }
 

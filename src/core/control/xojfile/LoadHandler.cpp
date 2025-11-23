@@ -645,6 +645,7 @@ void LoadHandler::parseStroke() {
     const char* motionData = LoadHandlerHelper::getAttrib("motion", true, this);
     if (motionData != nullptr && *motionData != '\0') {
         auto motionRecording = std::make_unique<MotionRecording>();
+        size_t pointsParsed = 0;
         
         // Parse motion data: timestamp1,x1,y1,z1,isEraser1 timestamp2,x2,y2,z2,isEraser2 ...
         const char* ptr = motionData;
@@ -655,23 +656,43 @@ void LoadHandler::parseStroke() {
             
             char* endPtr = nullptr;
             timestamp = static_cast<size_t>(g_ascii_strtoull(ptr, &endPtr, 10));
-            if (endPtr == ptr || *endPtr != ',') break;
+            if (endPtr == ptr || *endPtr != ',') {
+                g_warning("%s", FC(_F("Motion recording parse error: invalid timestamp at position {1}") %
+                                   (ptr - motionData)));
+                break;
+            }
             ptr = endPtr + 1;
             
             x = g_ascii_strtod(ptr, &endPtr);
-            if (endPtr == ptr || *endPtr != ',') break;
+            if (endPtr == ptr || *endPtr != ',') {
+                g_warning("%s", FC(_F("Motion recording parse error: invalid x coordinate at position {1}") %
+                                   (ptr - motionData)));
+                break;
+            }
             ptr = endPtr + 1;
             
             y = g_ascii_strtod(ptr, &endPtr);
-            if (endPtr == ptr || *endPtr != ',') break;
+            if (endPtr == ptr || *endPtr != ',') {
+                g_warning("%s", FC(_F("Motion recording parse error: invalid y coordinate at position {1}") %
+                                   (ptr - motionData)));
+                break;
+            }
             ptr = endPtr + 1;
             
             z = g_ascii_strtod(ptr, &endPtr);
-            if (endPtr == ptr || *endPtr != ',') break;
+            if (endPtr == ptr || *endPtr != ',') {
+                g_warning("%s", FC(_F("Motion recording parse error: invalid z coordinate at position {1}") %
+                                   (ptr - motionData)));
+                break;
+            }
             ptr = endPtr + 1;
             
             isEraser = static_cast<int>(g_ascii_strtoull(ptr, &endPtr, 10));
-            if (endPtr == ptr) break;
+            if (endPtr == ptr) {
+                g_warning("%s", FC(_F("Motion recording parse error: invalid isEraser flag at position {1}") %
+                                   (ptr - motionData)));
+                break;
+            }
             ptr = endPtr;
             
             // Skip whitespace
@@ -680,10 +701,13 @@ void LoadHandler::parseStroke() {
             }
             
             motionRecording->addMotionPoint(Point(x, y, z), timestamp, isEraser != 0);
+            pointsParsed++;
         }
         
         if (motionRecording->hasMotionData()) {
             stroke->setMotionRecording(std::move(motionRecording));
+        } else if (pointsParsed == 0) {
+            g_warning("Motion recording attribute present but no valid data points parsed");
         }
     }
 
