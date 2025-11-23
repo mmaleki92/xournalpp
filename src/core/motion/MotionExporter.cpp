@@ -63,9 +63,9 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         }
 
         auto layers = page->getLayers();
-        for (auto* layer : *layers) {
+        for (auto* layer : layers) {
             auto elements = layer->getElements();
-            for (auto* element : *elements) {
+            for (auto* element : elements) {
                 if (auto* stroke = dynamic_cast<Stroke*>(element)) {
                     if (stroke->hasMotionRecording()) {
                         auto* motion = stroke->getMotionRecording();
@@ -121,9 +121,9 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
             bool firstStroke = true;
             auto layers = page->getLayers();
-            for (auto* layer : *layers) {
+            for (auto* layer : layers) {
                 auto elements = layer->getElements();
-                for (auto* element : *elements) {
+                for (auto* element : elements) {
                     if (auto* stroke = dynamic_cast<Stroke*>(element)) {
                         if (stroke->hasMotionRecording()) {
                             if (!firstStroke) {
