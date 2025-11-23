@@ -17,12 +17,12 @@
 
 #include "model/Element.h"
 
-#include "AudioElement.h"  // for AudioElement
-#include "LineStyle.h"     // for LineStyle
-#include "Point.h"         // for Point
+#include "AudioElement.h"     // for AudioElement
+#include "LineStyle.h"        // for LineStyle
+#include "MotionRecording.h"  // for MotionRecording
+#include "Point.h"            // for Point
 
 class Element;
-class MotionRecording;
 class ObjectInputStream;
 class ObjectOutputStream;
 class ShapeContainer;
