@@ -80,6 +80,15 @@ std::string serializeUInt(uint32_t x) {
     return resStr;
 }
 
+std::string serializeBool(bool b) {
+    ObjectOutputStream outStream(new BinObjectEncoding);
+    outStream.writeBool(b);
+    auto outStr = outStream.stealData();
+    auto resStr = std::string{outStr->str, outStr->len};
+    g_string_free(outStr, true);
+    return resStr;
+}
+
 std::string serializeStroke(Stroke& stroke) {
     ObjectOutputStream outStream(new BinObjectEncoding);
     stroke.serialize(outStream);
@@ -254,6 +263,25 @@ TEST(UtilObjectIOStream, testReadDouble) {
         EXPECT_TRUE(stream.read(&str[0], str.size() + 1));
         double output = stream.readDouble();
         EXPECT_DOUBLE_EQ(dbl, output);
+    }
+}
+
+TEST(UtilObjectIOStream, testReadBool) {
+    std::vector<bool> boolToTest{true, false, true, false};
+
+    std::vector<std::pair<std::string, bool>> testData;
+    testData.reserve(boolToTest.size());
+    for (bool value: boolToTest) { testData.emplace_back(serializeBool(value), value); }
+
+    for (auto&& data: testData) {
+        std::string& str = data.first;
+        bool b = data.second;
+
+        ObjectInputStream stream;
+        // The +1 stands for the \0 character
+        EXPECT_TRUE(stream.read(&str[0], str.size() + 1));
+        bool output = stream.readBool();
+        EXPECT_EQ(b, output);
     }
 }
 
