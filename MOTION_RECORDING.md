@@ -60,20 +60,37 @@ Motion recording will be automatically enabled during drawing:
 3. When stroke is complete, motion data is attached
 4. File save includes motion data
 
-### Exporting to Video
+### Exporting Motion Data
 
-Use the **MotionPlayback** plugin (see `plugins/MotionPlayback/README.md`):
+Motion export is now integrated into Xournal++ preferences:
 
-1. Create a document with strokes
-2. Menu: "Export Motion Recording" (or Shift+Alt+M)
-3. Choose output location
-4. Use FFmpeg to render video from exported frames
+1. **Configure Export Settings**:
+   - Open Preferences (Edit > Preferences)
+   - Navigate to "Audio Recording" tab
+   - Scroll down to "Motion Export Settings" section
+   - Set the export folder path
+   - Configure frame rate (default: 30 fps)
+   - Ensure "Enable Motion Export Feature" is checked
 
-Example:
-```bash
-ffmpeg -framerate 30 -pattern_type glob -i 'frame_*.png' \
-       -c:v libx264 -pix_fmt yuv420p output.mp4
-```
+2. **Export Motion Data**:
+   - Create or open a document with strokes containing motion data
+   - Menu: Tools > "Export Motion Recording" (or press Shift+Alt+M)
+   - Motion data will be exported to a timestamped subfolder
+   - Output includes:
+     - `motion_metadata.json` - Complete motion data
+     - `README.txt` - Instructions for video rendering
+
+3. **Create Video** (using external tools):
+   ```bash
+   # If you have generated frame images (custom script):
+   ffmpeg -framerate 30 -pattern_type glob -i 'frame_*.png' \
+          -c:v libx264 -pix_fmt yuv420p output.mp4
+   
+   # Use the JSON metadata for custom rendering
+   python render_motion.py motion_metadata.json
+   ```
+
+**Note**: The old MotionPlayback plugin has been replaced with this integrated feature.
 
 ## API Reference
 
