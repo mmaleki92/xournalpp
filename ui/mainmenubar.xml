@@ -845,6 +845,11 @@
      <attribute name="class">audio</attribute> <!-- Gets removed when audio is disabled -->
     </item>
     <item>
+     <attribute name="label" translatable="yes">Export Motion Recording</attribute>
+     <attribute name="action">win.motion-export-start</attribute>
+     <attribute name="accel">&lt;Shift&gt;&lt;Alt&gt;m</attribute>
+    </item>
+    <item>
      <attribute name="label" translatable="yes">Add/Edit TeX</attribute>
      <attribute name="action">win.tex</attribute>
      <attribute name="accel">&lt;Ctrl&gt;&lt;Shift&gt;x</attribute>

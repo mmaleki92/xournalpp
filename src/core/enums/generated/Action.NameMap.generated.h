@@ -92,6 +92,7 @@ constexpr const char* ACTION_NAMES[] = {  // Action to string conversion map
         "audio-stop-playback",
         "audio-seek-forwards",
         "audio-seek-backwards",
+        "motion-export-start",
         "select-font",
         "font",
         "tex",
