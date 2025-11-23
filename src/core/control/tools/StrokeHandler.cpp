@@ -66,6 +66,13 @@ auto StrokeHandler::onMotionNotifyEvent(const PositionInputData& pos, double zoo
         return true;
     }
 
+    // Capture motion data if enabled
+    if (stroke->hasMotionRecording()) {
+        // Convert screen coordinates to document coordinates (divide by zoom)
+        Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
+        stroke->getMotionRecording()->addMotionPoint(p, pos.time, false);
+    }
+
     stabilizer->processEvent(pos);
     return true;
 }
@@ -164,6 +171,13 @@ void StrokeHandler::onButtonReleaseEvent(const PositionInputData& pos, double zo
     if (!stroke) {
         return;
     }
+
+    // Record the final point if recording is active
+    if (stroke->hasMotionRecording()) {
+        Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
+        stroke->getMotionRecording()->addMotionPoint(p, pos.time, false);
+    }
+
     finalizeStroke(pos.pressure);
 
     Layer* layer = page->getSelectedLayer();
@@ -269,6 +283,15 @@ void StrokeHandler::onButtonPressEvent(const PositionInputData& pos, double zoom
     this->buttonDownPoint.y = pos.y / zoom;
 
     stroke = createStroke(this->control);
+
+    // Initialize motion recording if enabled
+    if (control->getSettings()->getMotionExportEnabled()) {
+        auto recording = std::make_unique<MotionRecording>();
+        // Store the initial point in document coordinates with the event timestamp
+        Point p(this->buttonDownPoint.x, this->buttonDownPoint.y, pos.pressure);
+        recording->addMotionPoint(p, pos.time, false);
+        stroke->setMotionRecording(std::move(recording));
+    }
 
     this->hasPressure = this->stroke->getToolType().isPressureSensitive() && pos.pressure != Point::NO_PRESSURE;
 
