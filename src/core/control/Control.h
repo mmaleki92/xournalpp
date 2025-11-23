@@ -41,6 +41,7 @@
 class LoadHandler;
 class GeometryToolController;
 class AudioController;
+class MotionExportController;
 class FullscreenHandler;
 class Sidebar;
 class GladeSearchpath;
@@ -313,6 +314,7 @@ public:
     Sidebar* getSidebar() const;
     SearchBar* getSearchBar() const;
     AudioController* getAudioController() const;
+    MotionExportController* getMotionExportController() const;
     PageTypeHandler* getPageTypes() const;
     PageBackgroundChangeController* getPageBackgroundChangeController() const;
     LayerController* getLayerController() const;
@@ -495,6 +497,7 @@ private:
     ScrollHandler* scrollHandler;
 
     std::unique_ptr<AudioController> audioController;
+    std::unique_ptr<MotionExportController> motionExportController;
 
     ToolbarDragDropHandler* dragDropHandler = nullptr;
 

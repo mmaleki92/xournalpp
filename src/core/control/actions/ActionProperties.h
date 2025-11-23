@@ -887,6 +887,26 @@ struct ActionProperties<Action::AUDIO_STOP_PLAYBACK> {
 };
 
 template <>
+struct ActionProperties<Action::MOTION_EXPORT_START> {
+    static void callback(GSimpleAction*, GVariant*, Control* ctrl) {
+        if (!ctrl->motionExportController) {
+            g_warning("Motion export controller not available");
+            return;
+        }
+        bool success = ctrl->getMotionExportController()->startExport();
+        if (success) {
+            Util::execInUiThread([win = ctrl->getGtkWindow()]() {
+                XojMsgBox::showInfoToUser(win, _("Motion export completed successfully!"));
+            });
+        } else {
+            Util::execInUiThread([win = ctrl->getGtkWindow()]() {
+                XojMsgBox::showErrorToUser(win, _("Motion export failed. Please check your settings."));
+            });
+        }
+    }
+};
+
+template <>
 struct ActionProperties<Action::TEX> {
     static void callback(GSimpleAction*, GVariant*, Control* ctrl) { ctrl->runLatex(); }
 };

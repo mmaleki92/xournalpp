@@ -727,6 +727,13 @@ void SettingsDialog::load() {
     gtk_widget_destroy(builder.get("audioRecordingTabBox"));
 #endif
 
+    // Load Motion Export settings
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(builder.get("fcMotionExportPath")),
+                                        Util::toGFilename(settings->getMotionExportFolder()).c_str());
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(builder.get("spMotionExportFrameRate")),
+                              settings->getMotionExportFrameRate());
+    loadCheckbox("cbMotionExportEnabled", settings->getMotionExportEnabled());
+
     this->latexPanel.load(settings->latexSettings);
     paletteTab.renderPaletteTab(this->control->getPalette().getFilePath());
 }
@@ -1085,6 +1092,17 @@ void SettingsDialog::save() {
     settings->setDefaultSeekTime(
             static_cast<unsigned int>(gtk_spin_button_get_value(GTK_SPIN_BUTTON(builder.get("spDefaultSeekTime")))));
 #endif
+
+    // Save Motion Export settings
+    auto motionExportFile = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(builder.get("fcMotionExportPath")));
+    auto motionExportPath = Util::fromGFile(motionExportFile);
+    g_object_unref(motionExportFile);
+    if (fs::is_directory(motionExportPath)) {
+        settings->setMotionExportFolder(motionExportPath);
+    }
+    settings->setMotionExportFrameRate(
+            static_cast<int>(gtk_spin_button_get_value(GTK_SPIN_BUTTON(builder.get("spMotionExportFrameRate")))));
+    settings->setMotionExportEnabled(getCheckbox("cbMotionExportEnabled"));
 
     const std::optional<std::filesystem::path> selectedPalette = paletteTab.getSelectedPalette();
     if (selectedPalette.has_value()) {

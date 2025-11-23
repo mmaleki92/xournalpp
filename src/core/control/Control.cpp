@@ -13,6 +13,7 @@
 
 #include "control/AudioController.h"                             // for Audi...
 #include "control/ClipboardHandler.h"                            // for Clip...
+#include "motion/MotionExportController.h"                       // for Moti...
 #include "control/CompassController.h"                           // for Comp...
 #include "control/RecentManager.h"                               // for Rece...
 #include "control/ScrollHandler.h"                               // for Scro...
@@ -142,6 +143,12 @@ Control::Control(GApplication* gtkApp, GladeSearchpath* gladeSearchPath, bool di
         this->audioController = std::make_unique<AudioController>(this->settings, this);
     }
 #endif
+
+    // Initialize motion export controller
+    if (this->settings->getMotionExportEnabled()) {
+        this->motionExportController =
+                std::make_unique<MotionExportController>(this->settings, this, this->doc);
+    }
 
     this->scrollHandler = new ScrollHandler(this);
 
@@ -2555,6 +2562,10 @@ auto Control::getSidebar() const -> Sidebar* { return this->sidebar; }
 auto Control::getSearchBar() const -> SearchBar* { return this->searchBar; }
 
 auto Control::getAudioController() const -> AudioController* { return this->audioController.get(); }
+
+auto Control::getMotionExportController() const -> MotionExportController* {
+    return this->motionExportController.get();
+}
 
 auto Control::getPageTypes() const -> PageTypeHandler* { return this->pageTypes; }
 

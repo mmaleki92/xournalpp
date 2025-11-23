@@ -510,6 +510,12 @@ void Settings::parseItem(xmlDocPtr doc, xmlNodePtr cur) {
         this->sizeUnit = reinterpret_cast<const char*>(value);
     } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("audioFolder")) == 0) {
         this->audioFolder = fs::path(xoj::util::utf8(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("motionExportFolder")) == 0) {
+        this->motionExportFolder = fs::path(xoj::util::utf8(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("motionExportFrameRate")) == 0) {
+        this->motionExportFrameRate = g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10);
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("motionExportEnabled")) == 0) {
+        this->motionExportEnabled = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
     } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("autosaveEnabled")) == 0) {
         this->autosaveEnabled = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
     } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("autosaveTimeout")) == 0) {
@@ -1155,6 +1161,11 @@ void Settings::save() {
     SAVE_DOUBLE_PROP(audioGain);
     SAVE_INT_PROP(defaultSeekTime);
 #endif
+
+    // Motion Export settings
+    saveProperty("motionExportFolder", char_cast(this->motionExportFolder.u8string().c_str()), root);
+    SAVE_INT_PROP(motionExportFrameRate);
+    SAVE_BOOL_PROP(motionExportEnabled);
 
     SAVE_STRING_PROP(pluginEnabled);
     SAVE_STRING_PROP(pluginDisabled);
@@ -2264,6 +2275,38 @@ void Settings::setDefaultSeekTime(unsigned int t) {
     save();
 }
 #endif
+
+// Motion Export settings
+auto Settings::getMotionExportFolder() const -> fs::path const& { return this->motionExportFolder; }
+
+void Settings::setMotionExportFolder(fs::path motionExportFolder) {
+    if (this->motionExportFolder == motionExportFolder) {
+        return;
+    }
+
+    this->motionExportFolder = std::move(motionExportFolder);
+    save();
+}
+
+auto Settings::getMotionExportFrameRate() const -> int { return this->motionExportFrameRate; }
+
+void Settings::setMotionExportFrameRate(int frameRate) {
+    if (this->motionExportFrameRate == frameRate) {
+        return;
+    }
+    this->motionExportFrameRate = frameRate;
+    save();
+}
+
+auto Settings::getMotionExportEnabled() const -> bool { return this->motionExportEnabled; }
+
+void Settings::setMotionExportEnabled(bool enabled) {
+    if (this->motionExportEnabled == enabled) {
+        return;
+    }
+    this->motionExportEnabled = enabled;
+    save();
+}
 
 auto Settings::getPluginEnabled() const -> string const& { return this->pluginEnabled; }
 

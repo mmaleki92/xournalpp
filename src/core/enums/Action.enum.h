@@ -135,6 +135,8 @@ enum class Action : size_t {
     AUDIO_SEEK_FORWARDS,
     AUDIO_SEEK_BACKWARDS,
 
+    MOTION_EXPORT_START,
+
     SELECT_FONT,
     FONT,  ///< Action whose state is the font's description
     TEX,

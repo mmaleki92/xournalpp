@@ -433,6 +433,16 @@ public:
     void setDefaultSeekTime(unsigned int t);
 #endif
 
+    // Motion Export settings
+    fs::path const& getMotionExportFolder() const;
+    void setMotionExportFolder(fs::path motionExportFolder);
+
+    int getMotionExportFrameRate() const;
+    void setMotionExportFrameRate(int frameRate);
+
+    bool getMotionExportEnabled() const;
+    void setMotionExportEnabled(bool enabled);
+
     std::string const& getPluginEnabled() const;
     void setPluginEnabled(const std::string& pluginEnabled);
 
@@ -1026,6 +1036,21 @@ private:
      * Audio folder for audio recording
      */
     fs::path audioFolder;
+
+    /**
+     * Motion export folder for motion recording export
+     */
+    fs::path motionExportFolder;
+
+    /**
+     * Motion export frame rate (fps)
+     */
+    int motionExportFrameRate = 30;
+
+    /**
+     * Motion export enabled
+     */
+    bool motionExportEnabled = true;
 
     /**
      * Snap tolerance for the graph/dotted grid
