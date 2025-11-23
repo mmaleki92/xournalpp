@@ -63,3 +63,4 @@ Debug
 # Miscellaneous
 .DS_STORE
 *~
+_codeql_detected_source_root
