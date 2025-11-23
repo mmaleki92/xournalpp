@@ -144,12 +144,6 @@ Control::Control(GApplication* gtkApp, GladeSearchpath* gladeSearchPath, bool di
     }
 #endif
 
-    // Initialize motion export controller
-    if (this->settings->getMotionExportEnabled()) {
-        this->motionExportController =
-                std::make_unique<MotionExportController>(this->settings, this, this->doc);
-    }
-
     this->scrollHandler = new ScrollHandler(this);
 
     this->scheduler = new XournalScheduler();
@@ -159,6 +153,12 @@ Control::Control(GApplication* gtkApp, GladeSearchpath* gladeSearchPath, bool di
     // for crashhandling
     setEmergencyDocument(this->doc);
 
+    // Initialize motion export controller
+    // MOVED: This must be initialized AFTER this->doc is created, otherwise it gets a nullptr!
+    if (this->settings->getMotionExportEnabled()) {
+        this->motionExportController =
+                std::make_unique<MotionExportController>(this->settings, this, this->doc);
+    }
 
     this->zoom = new ZoomControl();
     this->zoom->setZoomStep(this->settings->getZoomStep() / 100.0);
@@ -1512,9 +1512,9 @@ static auto shouldFileOpen(fs::path const& filepath, GtkWindow* win) -> bool {
 void Control::askToOpenFile() {
     /**
      * Question: in case the current file has not been saved yet, do we want:
-     *      1. First ask to save it, save it or discard it and then show the FileChooserDialog to open a new file
-     *      2. First show the FileChooserDialog, and if a valid file has been selected and successfully opened, ask to
-     *         save or discard the current file
+     * 1. First ask to save it, save it or discard it and then show the FileChooserDialog to open a new file
+     * 2. First show the FileChooserDialog, and if a valid file has been selected and successfully opened, ask to
+     * save or discard the current file
      * For now, this implements option 1.
      */
     this->close([ctrl = this](bool closed) {
