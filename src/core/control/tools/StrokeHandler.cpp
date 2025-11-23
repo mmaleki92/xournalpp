@@ -70,7 +70,8 @@ auto StrokeHandler::onMotionNotifyEvent(const PositionInputData& pos, double zoo
     if (stroke->hasMotionRecording()) {
         // Convert screen coordinates to document coordinates (divide by zoom)
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
-        stroke->getMotionRecording()->addMotionPoint(p, pos.time, false);
+        // FIXED: Use pos.timestamp instead of pos.time
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, false);
     }
 
     stabilizer->processEvent(pos);
@@ -175,7 +176,8 @@ void StrokeHandler::onButtonReleaseEvent(const PositionInputData& pos, double zo
     // Record the final point if recording is active
     if (stroke->hasMotionRecording()) {
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
-        stroke->getMotionRecording()->addMotionPoint(p, pos.time, false);
+        // FIXED: Use pos.timestamp instead of pos.time
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, false);
     }
 
     finalizeStroke(pos.pressure);
@@ -289,7 +291,8 @@ void StrokeHandler::onButtonPressEvent(const PositionInputData& pos, double zoom
         auto recording = std::make_unique<MotionRecording>();
         // Store the initial point in document coordinates with the event timestamp
         Point p(this->buttonDownPoint.x, this->buttonDownPoint.y, pos.pressure);
-        recording->addMotionPoint(p, pos.time, false);
+        // FIXED: Use pos.timestamp instead of pos.time
+        recording->addMotionPoint(p, pos.timestamp, false);
         stroke->setMotionRecording(std::move(recording));
     }
 
