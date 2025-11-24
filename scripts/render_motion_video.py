@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""
+Render Xournal++ motion recording data to video frames.
+
+This script reads the motion_metadata.json file exported from Xournal++
+and renders it frame-by-frame, creating images that can be converted to video.
+
+Requirements:
+    pip install pillow
+
+Usage:
+    python render_motion_video.py motion_metadata.json output_frames/
+    
+    # Then create video with FFmpeg:
+    ffmpeg -framerate 30 -i output_frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4
+"""
+
+import json
+import os
+import sys
+from PIL import Image, ImageDraw
+
+
+def render_motion_video(metadata_path, output_dir, fps=None):
+    """
+    Render motion recording to video frames.
+    
+    Args:
+        metadata_path: Path to motion_metadata.json file
+        output_dir: Directory to save rendered frames
+        fps: Override frame rate (uses metadata value if None)
+    """
+    # Load motion data
+    print(f"Loading motion data from {metadata_path}...")
+    with open(metadata_path, 'r') as f:
+        data = json.load(f)
+    
+    frame_rate = fps if fps is not None else data['frameRate']
+    min_time = data['minTimestamp']
+    max_time = data['maxTimestamp']
+    
+    print(f"Motion data info:")
+    print(f"  Frame rate: {frame_rate} fps")
+    print(f"  Time range: {min_time}ms - {max_time}ms ({(max_time - min_time) / 1000:.2f}s)")
+    print(f"  Total motion points: {data['totalMotionPoints']}")
+    print(f"  Pages: {len(data['pages'])}")
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Calculate frame times
+    duration_ms = max_time - min_time
+    num_frames = int((duration_ms * frame_rate) / 1000) + 1
+    frame_interval_ms = 1000 / frame_rate
+    
+    print(f"Rendering {num_frames} frames...")
+    
+    frame_number = 0
+    current_page_idx = 0
+    
+    # Pre-process: create a timeline of which page is active at each timestamp
+    page_timeline = []
+    for page in data['pages']:
+        if page['strokes']:
+            # Find min and max timestamps for this page
+            page_min = float('inf')
+            page_max = float('-inf')
+            for stroke in page['strokes']:
+                if stroke['motionPoints']:
+                    page_min = min(page_min, stroke['motionPoints'][0]['t'])
+                    page_max = max(page_max, stroke['motionPoints'][-1]['t'])
+            
+            if page_min != float('inf'):
+                page_timeline.append({
+                    'pageIndex': page['pageIndex'],
+                    'minTime': page_min,
+                    'maxTime': page_max,
+                    'page': page
+                })
+    
+    # Sort by start time
+    page_timeline.sort(key=lambda p: p['minTime'])
+    
+    # Render each frame
+    for frame_idx in range(num_frames):
+        current_time = min_time + (frame_idx * frame_interval_ms)
+        
+        # Find which page we're on
+        current_page = data['pages'][0]  # Default to first page
+        for page_info in page_timeline:
+            if page_info['minTime'] <= current_time <= page_info['maxTime']:
+                current_page = page_info['page']
+                break
+        
+        # Create canvas with page background
+        width = int(current_page['width'])
+        height = int(current_page['height'])
+        bg = current_page['background']['color']
+        bg_color = (bg['r'], bg['g'], bg['b'], bg['a'])
+        
+        img = Image.new('RGBA', (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        # Draw all strokes up to current_time on this page
+        for stroke in current_page['strokes']:
+            stroke_color = (stroke['color']['r'],
+                          stroke['color']['g'],
+                          stroke['color']['b'],
+                          stroke['color']['a'])
+            stroke_width = int(max(1, stroke['width']))  # Ensure at least 1px width
+            
+            # Collect points up to current_time
+            visible_points = []
+            for point in stroke['motionPoints']:
+                if point['t'] <= current_time:
+                    visible_points.append(point)
+                else:
+                    break
+            
+            # Draw the stroke progressively
+            if len(visible_points) > 1:
+                for i in range(1, len(visible_points)):
+                    prev = visible_points[i-1]
+                    curr = visible_points[i]
+                    
+                    # Handle eraser: draw in background color to "erase"
+                    if curr['isEraser'] or stroke['tool'] == 'eraser':
+                        draw_color = bg_color
+                    else:
+                        draw_color = stroke_color
+                    
+                    # Draw line segment with rounded caps
+                    draw.line([(prev['x'], prev['y']), 
+                              (curr['x'], curr['y'])],
+                             fill=draw_color, width=stroke_width)
+        
+        # Save frame
+        frame_path = os.path.join(output_dir, f'frame_{frame_number:06d}.png')
+        img.save(frame_path)
+        frame_number += 1
+        
+        # Progress indicator
+        if frame_number % 30 == 0 or frame_number == num_frames:
+            progress = (frame_number / num_frames) * 100
+            print(f"  Progress: {frame_number}/{num_frames} frames ({progress:.1f}%)")
+    
+    print(f"\n✓ Rendering complete! {frame_number} frames saved to {output_dir}/")
+    print(f"\nCreate video with FFmpeg:")
+    print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
+    print(f"\nCreate high-quality video:")
+    print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -crf 18 -preset slow output.mp4")
+    print(f"\nCreate GIF:")
+    print(f"  ffmpeg -framerate 10 -i {output_dir}/frame_%06d.png -vf \"scale=800:-1:flags=lanczos\" output.gif")
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python render_motion_video.py <motion_metadata.json> <output_dir> [fps]")
+        print("\nExample:")
+        print("  python render_motion_video.py motion_metadata.json output_frames/")
+        print("  python render_motion_video.py motion_metadata.json output_frames/ 60")
+        sys.exit(1)
+    
+    metadata_path = sys.argv[1]
+    output_dir = sys.argv[2]
+    fps = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    
+    if not os.path.exists(metadata_path):
+        print(f"Error: File not found: {metadata_path}")
+        sys.exit(1)
+    
+    try:
+        render_motion_video(metadata_path, output_dir, fps)
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

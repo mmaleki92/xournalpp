@@ -4,6 +4,15 @@
 
 The Motion Export feature allows you to export motion recording data from Xournal++ strokes. This data captures the complete drawing motion of both pen and eraser tools, with timestamps and pressure information, enabling you to recreate the drawing process as a video or animation.
 
+The exported `motion_metadata.json` includes complete page styling (dimensions, background type/color) and stroke properties (color, width, tool type, line style), allowing for accurate video reproduction of your drawings.
+
+**Quick Start**: Use the included Python script to render videos:
+```bash
+python scripts/render_motion_video.py motion_metadata.json output_frames/
+ffmpeg -framerate 30 -i output_frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4
+```
+See [scripts/README_MOTION.md](scripts/README_MOTION.md) for detailed instructions.
+
 ## Setup
 
 ### 1. Configure Motion Export Settings
