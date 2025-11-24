@@ -27,6 +27,13 @@
 #include "util/SmallVector.h"             // for SmallVector
 #include "util/safe_casts.h"              // for as_unsigned
 
+namespace {
+// Convert eraser thickness (radius) to diameter for motion recording
+constexpr double ERASER_RADIUS_TO_DIAMETER = 2.0;
+// Convert microseconds to milliseconds
+constexpr int64_t MICROSECONDS_TO_MILLISECONDS = 1000;
+}  // namespace
+
 EraseHandler::EraseHandler(UndoRedoHandler* undo, Document* doc, const PageRef& page, ToolHandler* handler,
                            LegacyRedrawable* view):
         page(page),
@@ -68,7 +75,8 @@ void EraseHandler::erase(double x, double y, size_t timestamp) {
         // Create a stroke to hold the eraser motion
         eraserMotionStroke = std::make_unique<Stroke>();
         eraserMotionStroke->setToolType(StrokeTool::ERASER);
-        eraserMotionStroke->setWidth(this->handler->getThickness() * 2);  // Full eraser diameter
+        // Convert eraser radius (thickness) to diameter for the motion stroke
+        eraserMotionStroke->setWidth(this->handler->getThickness() * ERASER_RADIUS_TO_DIAMETER);
         eraserMotionStroke->setColor(Colors::white);  // White color for eraser
     }
 
@@ -76,7 +84,8 @@ void EraseHandler::erase(double x, double y, size_t timestamp) {
     // Use current timestamp or generate one if not provided
     size_t currentTimestamp = timestamp;
     if (currentTimestamp == 0) {
-        currentTimestamp = as_unsigned(g_get_monotonic_time() / 1000);  // Convert to milliseconds
+        // Convert microseconds to milliseconds for timestamp
+        currentTimestamp = as_unsigned(g_get_monotonic_time() / MICROSECONDS_TO_MILLISECONDS);
     }
     
     Point eraserPoint(x, y, -1.0);  // No pressure for eraser
