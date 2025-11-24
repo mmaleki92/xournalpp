@@ -192,3 +192,37 @@ TEST(MotionRecording, testSerialization) {
     // which are tested in the util/ObjectIOStreamTest.cpp file.
     // This test primarily verifies the API usage compiles correctly.
 }
+
+TEST(MotionRecording, testEraserStrokeMotion) {
+    // Test that eraser motion can be recorded in a stroke
+    Stroke eraserStroke;
+    eraserStroke.setToolType(StrokeTool::ERASER);
+    eraserStroke.setWidth(10.0);  // Typical eraser width
+    
+    // Create motion recording for eraser movement
+    auto motion = std::make_unique<MotionRecording>();
+    motion->addMotionPoint(Point(100.0, 100.0, -1.0), 1000, true);  // Start erasing
+    motion->addMotionPoint(Point(110.0, 105.0, -1.0), 1050, true);  // Continue erasing
+    motion->addMotionPoint(Point(120.0, 110.0, -1.0), 1100, true);  // Continue erasing
+    motion->addMotionPoint(Point(130.0, 115.0, -1.0), 1150, true);  // End erasing
+    
+    eraserStroke.setMotionRecording(std::move(motion));
+    
+    // Verify eraser stroke has motion recording
+    EXPECT_TRUE(eraserStroke.hasMotionRecording());
+    EXPECT_EQ(eraserStroke.getToolType(), StrokeTool::ERASER);
+    
+    // Verify motion points
+    const auto* attachedMotion = eraserStroke.getMotionRecording();
+    EXPECT_NE(attachedMotion, nullptr);
+    EXPECT_EQ(attachedMotion->getMotionPointCount(), 4);
+    EXPECT_EQ(attachedMotion->getStartTimestamp(), 1000);
+    EXPECT_EQ(attachedMotion->getEndTimestamp(), 1150);
+    
+    // Verify all points are marked as eraser
+    const auto& points = attachedMotion->getMotionPoints();
+    for (const auto& point : points) {
+        EXPECT_TRUE(point.isEraser);
+        EXPECT_EQ(point.point.z, -1.0);  // No pressure for eraser
+    }
+}
