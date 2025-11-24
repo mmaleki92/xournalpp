@@ -70,14 +70,16 @@ auto StrokeHandler::onMotionNotifyEvent(const PositionInputData& pos, double zoo
     if (stroke->hasMotionRecording()) {
         // Convert screen coordinates to document coordinates (divide by zoom)
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
-        // Check if this is an eraser stroke to set the isEraser flag correctly
-        bool isEraserStroke = (stroke->getToolType() == StrokeTool::ERASER);
         // FIXED: Use pos.timestamp instead of pos.time
-        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke);
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke());
     }
 
     stabilizer->processEvent(pos);
     return true;
+}
+
+bool StrokeHandler::isEraserStroke() const {
+    return stroke && stroke->getToolType() == StrokeTool::ERASER;
 }
 
 void StrokeHandler::paintTo(Point point) {
@@ -178,10 +180,8 @@ void StrokeHandler::onButtonReleaseEvent(const PositionInputData& pos, double zo
     // Record the final point if recording is active
     if (stroke->hasMotionRecording()) {
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
-        // Check if this is an eraser stroke to set the isEraser flag correctly
-        bool isEraserStroke = (stroke->getToolType() == StrokeTool::ERASER);
         // FIXED: Use pos.timestamp instead of pos.time
-        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke);
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke());
     }
 
     finalizeStroke(pos.pressure);
@@ -295,10 +295,8 @@ void StrokeHandler::onButtonPressEvent(const PositionInputData& pos, double zoom
         auto recording = std::make_unique<MotionRecording>();
         // Store the initial point in document coordinates with the event timestamp
         Point p(this->buttonDownPoint.x, this->buttonDownPoint.y, pos.pressure);
-        // Check if this is an eraser stroke to set the isEraser flag correctly
-        bool isEraserStroke = (stroke->getToolType() == StrokeTool::ERASER);
         // FIXED: Use pos.timestamp instead of pos.time
-        recording->addMotionPoint(p, pos.timestamp, isEraserStroke);
+        recording->addMotionPoint(p, pos.timestamp, isEraserStroke());
         stroke->setMotionRecording(std::move(recording));
     }
 
