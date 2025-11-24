@@ -3,6 +3,7 @@
 #include <algorithm>  // for min, max
 #include <cstdio>     // for snprintf
 #include <fstream>    // for ofstream
+#include <locale>     // for std::locale, std::locale::classic
 
 #include <glib.h>  // for g_message, g_warning
 
@@ -102,6 +103,11 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
     // Export motion data as metadata file
     fs::path metadataPath = outputPath / "motion_metadata.json";
     std::ofstream metadataFile(metadataPath);
+    
+    // FIX: Force standard C locale to ensure numbers are formatted correctly for JSON
+    // (e.g., no digit grouping commas "1,000", dot for decimals "1.5" instead of "1,5")
+    metadataFile.imbue(std::locale::classic());
+
     if (metadataFile.is_open()) {
         metadataFile << "{\n";
         metadataFile << "  \"frameRate\": " << frameRate << ",\n";
