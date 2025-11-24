@@ -27,6 +27,18 @@ import sys
 from PIL import Image, ImageDraw
 
 
+def get_normalized_pressure(point):
+    """
+    Get normalized pressure from a motion point.
+    
+    Returns:
+        float: Pressure value 0.0-1.0, or 1.0 if not available
+               (Pressure is -1.0 when not available from hardware)
+    """
+    pressure = point.get('p', 1.0)
+    return 1.0 if pressure < 0.0 else pressure
+
+
 def render_motion_video(metadata_path, output_dir, fps=None):
     """
     Render motion recording to video frames.
@@ -47,17 +59,12 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     
     # Check for pressure data in the motion points
     # Pressure is -1.0 when not available, 0.0-1.0 when available
-    has_pressure = False
-    for page in data['pages']:
-        for stroke in page.get('strokes', []):
-            for point in stroke.get('motionPoints', []):
-                if 'p' in point and point['p'] >= 0.0:
-                    has_pressure = True
-                    break
-            if has_pressure:
-                break
-        if has_pressure:
-            break
+    has_pressure = any(
+        point.get('p', -1.0) >= 0.0
+        for page in data['pages']
+        for stroke in page.get('strokes', [])
+        for point in stroke.get('motionPoints', [])
+    )
     
     print(f"Motion data info:")
     print(f"  Frame rate: {frame_rate} fps")
@@ -152,10 +159,7 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                         draw_color = stroke_color_rgb
                     
                     # Calculate width based on pressure if available
-                    # Pressure is -1.0 when not available, 0.0-1.0 when available
-                    pressure = curr.get('p', 1.0)
-                    if pressure < 0.0:
-                        pressure = 1.0
+                    pressure = get_normalized_pressure(curr)
                     
                     # Apply pressure to base width (ensure minimum 1px)
                     stroke_width = int(max(1, base_width * pressure))
