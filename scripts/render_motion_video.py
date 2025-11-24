@@ -84,12 +84,28 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Calculate frame times
+    # Calculate frame times based on motion data points
+    # FPS controls sampling density: how many motion states to capture per second
+    # Instead of duration × FPS, we base frame count on actual motion points available
     duration_ms = max_time - min_time
-    num_frames = int((duration_ms * frame_rate) / 1000) + 1
-    frame_interval_ms = 1000 / frame_rate
+    total_motion_points = data['totalMotionPoints']
     
-    print(f"Rendering {num_frames} frames...")
+    # Calculate number of frames based on motion point density and FPS
+    # Strategy: Use total motion points as base, scale by FPS as a sampling factor
+    # Higher FPS = more frequent sampling of the motion data
+    if total_motion_points > 0 and duration_ms > 0:
+        # Calculate average motion points per second in the recording
+        motion_density = total_motion_points / (duration_ms / 1000.0)
+        
+        # Use FPS as a multiplier for sampling: higher FPS = more frames
+        # But cap it to avoid generating too many frames
+        num_frames = max(int(total_motion_points * (frame_rate / motion_density)), total_motion_points)
+        frame_interval_ms = duration_ms / max(num_frames - 1, 1)
+    else:
+        num_frames = 1
+        frame_interval_ms = 1.0
+    
+    print(f"Rendering {num_frames} frames (motion density: {motion_density:.1f} points/sec, sampling at {frame_rate} fps)...")
     
     frame_number = 0
     current_page_idx = 0
@@ -140,11 +156,15 @@ def render_motion_video(metadata_path, output_dir, fps=None):
         
         # Draw all strokes up to current_time on this page
         for stroke in current_page['strokes']:
-            # Use RGB color (without alpha channel)
-            stroke_color_rgb = (stroke['color']['r'],
-                               stroke['color']['g'],
-                               stroke['color']['b'])
-            base_width = stroke['width']  # Base width from stroke
+            # Get stroke color - ensure all components are valid
+            stroke_color = stroke.get('color', {})
+            stroke_color_rgb = (
+                stroke_color.get('r', 0),
+                stroke_color.get('g', 0),
+                stroke_color.get('b', 0)
+            )
+            base_width = stroke.get('width', 2.0)  # Default width if missing
+            stroke_tool = stroke.get('tool', 'pen')  # Default to pen if missing
             
             # Collect points up to current_time
             visible_points = []
@@ -160,11 +180,28 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                     prev = visible_points[i-1]
                     curr = visible_points[i]
                     
-                    # Handle eraser: draw in background color to "erase"
-                    if curr['isEraser'] or stroke['tool'] == 'eraser':
-                        draw_color = bg_color_rgb
-                    else:
+                    # Determine if this is an eraser stroke
+                    # A stroke is an eraser if:
+                    #   1. The stroke tool is 'eraser', OR
+                    #   2. The individual motion point is marked as eraser
+                    point_is_eraser = curr.get('isEraser', False)
+                    is_eraser_stroke = (stroke_tool == 'eraser') or point_is_eraser
+                    
+                    # DEBUG: Log first point of first stroke to help diagnose issues
+                    if frame_idx == 0 and i == 1:
+                        print(f"  DEBUG: First stroke - tool='{stroke_tool}', point_isEraser={point_is_eraser}, "
+                              f"is_eraser_stroke={is_eraser_stroke}, "
+                              f"stroke_color={stroke_color_rgb}, bg_color={bg_color_rgb}")
+                    
+                    # Choose drawing color:
+                    # - For pen/highlighter: use stroke color (visible drawing)
+                    # - For eraser: use background color (simulate erasing)
+                    if not is_eraser_stroke:
+                        # This is a pen/highlighter stroke - draw in stroke color
                         draw_color = stroke_color_rgb
+                    else:
+                        # This is an eraser stroke - draw in background color to erase
+                        draw_color = bg_color_rgb
                     
                     # Calculate width based on pressure if available
                     pressure = get_normalized_pressure(curr)
