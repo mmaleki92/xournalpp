@@ -560,8 +560,9 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             
             s_color = stroke.get('color', {'r':0,'g':0,'b':0})
             base_width = stroke.get('width', 1.5)
-            # Check if this is an eraser stroke - either from tool type or from motion point flag
-            is_eraser = stroke.get('tool') == 'eraser' or any(p.get('isEraser', False) for p in visible_points)
+            # Check if this is an eraser stroke - first check tool type, then motion point flags
+            # Short-circuit evaluation avoids unnecessary iteration if tool is already 'eraser'
+            is_eraser = (stroke.get('tool') == 'eraser') or any(p.get('isEraser', False) for p in visible_points)
             
             if is_eraser:
                 # Eraser color = background color? 

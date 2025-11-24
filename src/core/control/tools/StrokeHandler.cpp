@@ -79,6 +79,9 @@ auto StrokeHandler::onMotionNotifyEvent(const PositionInputData& pos, double zoo
 }
 
 bool StrokeHandler::isEraserStroke() const {
+    // Check if stroke exists and is an eraser stroke
+    // This method is only called when stroke->hasMotionRecording() is true,
+    // so stroke is guaranteed to be non-null
     return stroke && stroke->getToolType() == StrokeTool::ERASER;
 }
 
