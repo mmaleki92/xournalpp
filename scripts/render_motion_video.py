@@ -567,10 +567,14 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             
             if is_eraser:
                 # For eraser strokes, use DEST_OUT operator to actually erase content
-                # This removes pixels where the eraser path is drawn, creating realistic erasing effect
+                # IMPORTANT: This REMOVES pixels where the eraser path is drawn
+                # - Content disappears progressively as eraser moves (realistic erasing)
+                # - Background becomes visible in erased areas
+                # - NO colored overlay or highlighting - just pure removal
+                # - Viewers see the evolution of erasing frame-by-frame
                 ctx.save()
                 ctx.set_operator(cairo.OPERATOR_DEST_OUT)
-                # Draw the eraser path with full opacity to erase underlying content
+                # Draw the eraser path with full opacity to completely erase underlying content
                 ctx.set_source_rgba(1.0, 1.0, 1.0, 1.0)
                 draw_width = base_width
             else:
