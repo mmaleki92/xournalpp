@@ -309,14 +309,16 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     
     for page in data['pages']:
         for stroke in page.get('strokes', []):
-            if stroke.get('motionPoints'):
-                stroke_duration = stroke['motionPoints'][-1]['t'] - stroke['motionPoints'][0]['t']
+            motion_points = stroke.get('motionPoints', [])
+            # Skip strokes with no motion points or only a single point
+            if len(motion_points) >= 2:
+                stroke_duration = motion_points[-1]['t'] - motion_points[0]['t']
                 stroke_timeline.append({
                     'page': page,
                     'stroke': stroke,
                     'startTime': cumulative_time,
                     'endTime': cumulative_time + stroke_duration,
-                    'normalizedPoints': stroke['motionPoints']  # Points with timestamps starting from 0
+                    'normalizedPoints': motion_points  # Points with timestamps starting from 0
                 })
                 cumulative_time += stroke_duration
     
