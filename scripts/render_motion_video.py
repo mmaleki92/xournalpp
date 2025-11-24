@@ -46,11 +46,12 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     max_time = data['maxTimestamp']
     
     # Check for pressure data in the motion points
+    # Pressure is -1.0 when not available, 0.0-1.0 when available
     has_pressure = False
     for page in data['pages']:
         for stroke in page.get('strokes', []):
             for point in stroke.get('motionPoints', []):
-                if 'p' in point and point['p'] >= 0:
+                if 'p' in point and point['p'] >= 0.0:
                     has_pressure = True
                     break
             if has_pressure:
@@ -151,9 +152,9 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                         draw_color = stroke_color_rgb
                     
                     # Calculate width based on pressure if available
-                    # Use current point's pressure, or 1.0 if not available (pressure = -1)
+                    # Pressure is -1.0 when not available, 0.0-1.0 when available
                     pressure = curr.get('p', 1.0)
-                    if pressure < 0:
+                    if pressure < 0.0:
                         pressure = 1.0
                     
                     # Apply pressure to base width (ensure minimum 1px)
