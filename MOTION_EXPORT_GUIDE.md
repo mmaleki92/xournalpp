@@ -145,20 +145,13 @@ Each stroke contains:
   - **hasDashes**: Whether the stroke has a dashed pattern
   - **dashes**: Array of dash lengths in points (only present if hasDashes is true)
 
-**Note about Eraser Strokes:**
-When using the default eraser to erase content, eraser motion is recorded in separate strokes with `"tool": "eraser"`. These strokes capture where and when erasing occurred. When rendering videos:
-- Draw pen/highlighter strokes normally
-- Use eraser strokes to show where erasing happened
-- Progressively remove or fade out portions of strokes that were erased
-- The `isEraser` flag in motion points indicates eraser movement
-
 Each motion point in a stroke contains:
 
 - **t** (timestamp): Time in milliseconds relative to the stroke's start (always starts from 0 for each stroke)
 - **x**: X-coordinate of the pen/eraser position
 - **y**: Y-coordinate of the pen/eraser position
 - **p** (pressure): Stylus pressure (0.0 to 1.0), or -1.0 if not available
-- **isEraser**: Boolean flag (true for eraser motion points, false for pen/highlighter)
+- **isEraser**: Boolean flag (true for eraser, false for pen)
 
 **Important**: Timestamps are normalized per-stroke, meaning each stroke's timestamps start from 0. This removes idle time between strokes, making the exported data more compact and video rendering more efficient. To render a complete timeline, accumulate stroke durations sequentially.
 
@@ -408,40 +401,9 @@ This script:
 - Handles multi-page documents by detecting page transitions
 - Renders proper background colors for each page
 - Shows progressive drawing of strokes over time
-- Handles eraser strokes by drawing in background color (simple approach)
+- Handles eraser strokes by drawing in background color
 - Applies correct stroke colors and widths
 - Generates frames ready for FFmpeg conversion
-
-**Note about Eraser Rendering:**
-The simple approach above treats eraser strokes (tool="eraser") as drawing in the background color. For more sophisticated rendering that shows the actual erasing process:
-
-1. **Track which strokes exist at each timestamp**
-2. **When encountering an eraser stroke**, determine which drawn strokes it overlaps
-3. **Progressively remove or fade** the portions of those strokes that intersect with the eraser path
-4. **Use the eraser's width** (from the stroke's width property) to determine the eraser size
-
-Example advanced eraser handling:
-```python
-def apply_eraser_to_strokes(eraser_stroke, drawn_strokes, current_time):
-    """
-    Apply eraser motion to existing drawn strokes.
-    Returns modified versions of strokes with erased portions removed.
-    """
-    eraser_points = [p for p in eraser_stroke['motionPoints'] if p['t'] <= current_time]
-    eraser_width = eraser_stroke['width']
-    
-    modified_strokes = []
-    for drawn_stroke in drawn_strokes:
-        # Check if eraser path intersects with this stroke
-        # For each eraser position, remove nearby portions of drawn_stroke
-        # This requires geometric intersection calculations
-        # (Implementation details depend on your rendering library)
-        pass
-    
-    return modified_strokes
-```
-
-This advanced approach provides a more accurate recreation of the erasing process, showing strokes being progressively removed as the eraser moves over them.
 
 ## Troubleshooting
 

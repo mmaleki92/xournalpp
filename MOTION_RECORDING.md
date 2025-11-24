@@ -7,7 +7,6 @@ Xournal++ now supports recording the complete motion of pen and eraser strokes. 
 ## Key Features
 
 - **Records both pen and eraser movements** with timestamps
-- **Eraser motion tracking** - Records where and when erasing occurs (for default eraser mode)
 - **Pressure-sensitive data** captured (when available from tablet)
 - **Backward compatible** - files with motion data work in older versions (motion data is simply ignored)
 - **Minimal storage overhead** - motion data stored efficiently in the file format
@@ -52,27 +51,14 @@ The motion recording feature is designed to be fully backward compatible:
 
 ## Usage
 
-### Recording Motion
+### Recording Motion (Future Implementation)
 
-Motion recording is automatically enabled during drawing and erasing:
+Motion recording will be automatically enabled during drawing:
 
-**For Pen/Highlighter Strokes:**
 1. Start drawing a stroke
 2. Position and pressure data is recorded at high frequency
 3. When stroke is complete, motion data is attached
 4. File save includes motion data
-
-**For Eraser (Default Mode):**
-1. When using the default eraser to erase strokes
-2. The eraser position and movement is recorded with timestamps
-3. An eraser stroke (tool type: eraser) is created to store this motion
-4. The eraser stroke shows where and when erasing occurred
-5. Both the modified strokes AND eraser strokes are saved/exported
-
-**Note about Eraser Types:**
-- **Default Eraser**: Modifies strokes by splitting/removing parts. Motion is now recorded in separate eraser strokes.
-- **Whiteout Eraser**: Creates white strokes that cover content. Motion is recorded in those white strokes (as before).
-- **Delete Stroke Eraser**: Removes entire strokes. No motion recording (stroke is deleted).
 
 ### Exporting Motion Data
 
