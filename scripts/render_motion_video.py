@@ -312,7 +312,9 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             motion_points = stroke.get('motionPoints', [])
             # Skip strokes with no motion points or only a single point
             if len(motion_points) >= 2:
-                stroke_duration = motion_points[-1]['t'] - motion_points[0]['t']
+                # Calculate duration using max/min to handle potentially unsorted timestamps
+                timestamps = [p['t'] for p in motion_points]
+                stroke_duration = max(timestamps) - min(timestamps)
                 stroke_timeline.append({
                     'page': page,
                     'stroke': stroke,
@@ -378,6 +380,11 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             # Collect points up to current_time within this stroke
             # Convert current_time to stroke-relative time
             stroke_relative_time = current_time - stroke_start_time
+            
+            # Safety check: ensure stroke_relative_time is non-negative
+            if stroke_relative_time < 0:
+                continue
+            
             visible_points = []
             for point in stroke_info['normalizedPoints']:
                 if point['t'] <= stroke_relative_time:
