@@ -4,57 +4,97 @@ This directory contains helper scripts for rendering Xournal++ motion recording 
 
 ## render_motion_video.py
 
-Renders motion_metadata.json to video frames that can be converted to video using FFmpeg.
+High-quality motion recording renderer with Cairo graphics, direct video encoding, and optional cursor overlay.
 
 ### Requirements
 
 ```bash
-pip install pillow
+pip install pycairo
 ```
 
-### Usage
+For video encoding (optional):
+```bash
+# Ubuntu/Debian
+sudo apt-get install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows
+# Download from https://ffmpeg.org/
+```
+
+### Quick Start
 
 1. Export motion data from Xournal++:
    - Open a document with motion recording data
    - Go to **Tools > Export Motion Recording** (or press Shift+Alt+M)
    - Choose an output directory
 
-2. Render frames:
+2. Render and create video in one command:
    ```bash
-   python scripts/render_motion_video.py path/to/motion_metadata.json output_frames/
+   python scripts/render_motion_video.py motion_metadata.json output/ --video demo.mp4
    ```
 
-3. Create video with FFmpeg:
-   ```bash
-   # Standard quality video
-   ffmpeg -framerate 30 -i output_frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4
-   
-   # High quality video
-   ffmpeg -framerate 30 -i output_frames/frame_%06d.png -c:v libx264 -crf 18 -preset slow output.mp4
-   
-   # Create animated GIF
-   ffmpeg -framerate 10 -i output_frames/frame_%06d.png -vf "scale=800:-1:flags=lanczos" output.gif
-   ```
+### Usage Examples
+
+```bash
+# Render frames only (for manual processing)
+python scripts/render_motion_video.py motion_metadata.json output/
+
+# Render at 60 FPS and encode to video
+python scripts/render_motion_video.py motion_metadata.json output/ --fps 60 --video demo.mp4
+
+# High-quality video with cursor overlay
+python scripts/render_motion_video.py motion_metadata.json output/ --video demo.mp4 --quality high --cursor
+
+# Create GIF with cursor and cleanup frames
+python scripts/render_motion_video.py motion_metadata.json output/ --video demo.gif --quality gif --cursor --cleanup
+
+# Show all options
+python scripts/render_motion_video.py --help
+```
 
 ### Features
 
-The script correctly handles:
-- **Pressure-sensitive rendering**: Stroke width varies based on stylus pressure at each point
+**Rendering Quality:**
+- **Cairo graphics**: Professional anti-aliased rendering with smooth curves
+- **Pressure-sensitive strokes**: Variable width based on stylus pressure
+- **High-resolution output**: Crisp, smooth lines without pixelation
+
+**Drawing Features:**
 - **Multi-page documents**: Automatically switches between pages based on timestamps
-- **Page backgrounds**: Renders proper background colors and dimensions for each page
-- **Stroke styling**: Applies correct colors, widths, and tool types (pen/highlighter/eraser)
+- **Page backgrounds**: Renders proper background colors and dimensions
+- **Stroke styling**: Correct colors, widths, and tool types (pen/highlighter/eraser)
 - **Progressive drawing**: Shows strokes being drawn over time frame-by-frame
-- **Eraser handling**: Eraser strokes are rendered in the background color to simulate erasing
+- **Eraser handling**: Eraser strokes rendered in background color to simulate erasing
 
-### Options
+**New Features:**
+- **Direct video encoding**: Built-in FFmpeg integration (no manual commands needed)
+- **Cursor overlay**: Optional pencil/eraser cursor showing current drawing position
+- **Quality presets**: High, medium, low, and GIF output options
+- **Auto-cleanup**: Optional frame deletion after video encoding
 
-```bash
-# Use default frame rate from metadata
-python scripts/render_motion_video.py motion_metadata.json output_frames/
+### Command-Line Options
 
-# Override frame rate (e.g., 60 fps for smoother animation)
-python scripts/render_motion_video.py motion_metadata.json output_frames/ 60
-```
+| Option | Description |
+|--------|-------------|
+| `metadata` | Path to motion_metadata.json file (required) |
+| `output_dir` | Directory to save rendered frames (required) |
+| `--fps N` | Override frame rate (default: use metadata value) |
+| `--video FILE` | Encode frames to video file (requires FFmpeg) |
+| `--quality PRESET` | Video quality: high, medium, low, or gif (default: high) |
+| `--cursor` | Show pencil/eraser cursor at current drawing position |
+| `--cleanup` | Delete frame images after encoding video |
+| `--help` | Show help message |
+
+### FPS Behavior
+
+FPS represents the **sampling rate** - how many frames to generate per second of recording time:
+- 30 FPS on 2-second recording = 60 frames (2 × 30)
+- 60 FPS on 2-second recording = 120 frames (2 × 60)
+
+Higher FPS creates smoother animations but generates more frames.
 
 ### Output
 
@@ -69,20 +109,35 @@ output_frames/
 
 These frames can then be combined into a video using FFmpeg or any video editing software.
 
-### Example Workflow
+### Example Workflows
 
+**Simple video creation:**
 ```bash
-# 1. Export motion data from Xournal++ (via Tools > Export Motion Recording)
-#    This creates a directory with motion_metadata.json
+# Export from Xournal++ (Tools > Export Motion Recording)
+# Then render and encode in one command:
+python scripts/render_motion_video.py motion_metadata.json frames/ --video my_drawing.mp4
+```
 
-# 2. Render to frames
-python scripts/render_motion_video.py export_20231124_120000/motion_metadata.json frames/
+**High-quality tutorial video:**
+```bash
+# Render at 60 FPS with cursor showing what's being drawn
+python scripts/render_motion_video.py motion_metadata.json frames/ \
+  --fps 60 --video tutorial.mp4 --quality high --cursor --cleanup
+```
 
-# 3. Create video
-ffmpeg -framerate 30 -i frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p drawing.mp4
+**Create shareable GIF:**
+```bash
+# Lower framerate for smaller file size
+python scripts/render_motion_video.py motion_metadata.json frames/ \
+  --video animation.gif --quality gif --cursor --cleanup
+```
 
-# 4. (Optional) Clean up frames
-rm -rf frames/
+**Advanced: Keep frames for editing:**
+```bash
+# Render frames, encode video, but keep frames for further editing
+python scripts/render_motion_video.py motion_metadata.json frames/ \
+  --fps 60 --video draft.mp4 --cursor
+# Frames remain in frames/ directory for manual editing
 ```
 
 ### Troubleshooting

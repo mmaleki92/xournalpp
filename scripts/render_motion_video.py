@@ -10,21 +10,34 @@ Features:
     - Multi-page support: handles documents with multiple pages
     - Progressive drawing: shows strokes being drawn over time
     - Eraser support: renders eraser strokes correctly
+    - High-quality rendering with Cairo for smooth, anti-aliased output
 
 Requirements:
-    pip install pillow
+    pip install pycairo
+    
+    For video encoding (optional):
+    - FFmpeg (https://ffmpeg.org/)
 
 Usage:
+    # Render frames only
     python render_motion_video.py motion_metadata.json output_frames/
     
-    # Then create video with FFmpeg:
-    ffmpeg -framerate 30 -i output_frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4
+    # Render and encode to video directly
+    python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4
+    
+    # Render at custom FPS and encode high-quality video
+    python render_motion_video.py motion_metadata.json output_frames/ --fps 60 --video output.mp4 --quality high
+    
+    # Encode to GIF and cleanup frames
+    python render_motion_video.py motion_metadata.json output_frames/ --video output.gif --quality gif --cleanup
 """
 
 import json
 import os
 import sys
-from PIL import Image, ImageDraw
+import subprocess
+import shutil
+import cairo
 
 
 def get_normalized_pressure(point):
@@ -46,14 +59,191 @@ def get_normalized_pressure(point):
     return 1.0 if pressure < 0.0 else pressure
 
 
-def render_motion_video(metadata_path, output_dir, fps=None):
+def encode_video(frames_dir, output_video, frame_rate, quality='high', cleanup_frames=False):
     """
-    Render motion recording to video frames.
+    Encode rendered frames into a video file using FFmpeg.
+    
+    Args:
+        frames_dir: Directory containing the frame images
+        output_video: Path to output video file
+        frame_rate: Video frame rate
+        quality: Video quality - 'high', 'medium', 'low', or 'gif'
+        cleanup_frames: If True, delete frame images after encoding
+    
+    Returns:
+        bool: True if encoding succeeded, False otherwise
+    """
+    # Check if FFmpeg is available
+    if not shutil.which('ffmpeg'):
+        print("Error: FFmpeg not found. Please install FFmpeg to encode videos.")
+        print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
+        print("  macOS: brew install ffmpeg")
+        print("  Windows: Download from https://ffmpeg.org/")
+        return False
+    
+    print(f"\nEncoding video to {output_video}...")
+    
+    # Build FFmpeg command based on quality setting
+    if quality == 'gif':
+        # Create animated GIF
+        # Limit framerate to 20 FPS for reasonable file size (GIFs don't benefit from higher FPS)
+        # Scale to 800px width to reduce file size while maintaining readability
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(min(frame_rate, 20)),
+            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
+            '-vf', 'scale=800:-1:flags=lanczos',
+            output_video
+        ]
+    elif quality == 'high':
+        # High quality H.264
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(frame_rate),
+            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
+            '-c:v', 'libx264',
+            '-crf', '18',
+            '-preset', 'slow',
+            '-pix_fmt', 'yuv420p',
+            output_video
+        ]
+    elif quality == 'medium':
+        # Medium quality H.264
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(frame_rate),
+            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
+            '-c:v', 'libx264',
+            '-crf', '23',
+            '-preset', 'medium',
+            '-pix_fmt', 'yuv420p',
+            output_video
+        ]
+    else:  # low
+        # Low quality/fast encode
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(frame_rate),
+            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
+            '-c:v', 'libx264',
+            '-crf', '28',
+            '-preset', 'fast',
+            '-pix_fmt', 'yuv420p',
+            output_video
+        ]
+    
+    try:
+        # Run FFmpeg
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"✓ Video encoded successfully: {output_video}")
+            
+            # Cleanup frames if requested
+            if cleanup_frames:
+                print(f"Cleaning up frame images from {frames_dir}...")
+                for file in os.listdir(frames_dir):
+                    if file.startswith('frame_') and file.endswith('.png'):
+                        os.remove(os.path.join(frames_dir, file))
+                print("✓ Frame cleanup complete")
+            
+            return True
+        else:
+            print(f"✗ FFmpeg encoding failed:")
+            print(result.stderr)
+            return False
+            
+    except Exception as e:
+        print(f"✗ Error during video encoding: {e}")
+        return False
+
+
+def draw_pencil_cursor(ctx, x, y, color, size=20):
+    """
+    Draw a pencil icon at the specified position.
+    
+    Args:
+        ctx: Cairo context
+        x, y: Position to draw the pencil tip
+        color: RGB color tuple (r, g, b) normalized 0-1
+        size: Size of the pencil icon
+    """
+    # Save context state
+    ctx.save()
+    
+    # Pencil body (wood part)
+    ctx.set_source_rgb(0.8, 0.6, 0.2)  # Wood color
+    ctx.move_to(x, y)
+    ctx.line_to(x - size * 0.3, y - size * 0.8)
+    ctx.line_to(x + size * 0.3, y - size * 0.8)
+    ctx.close_path()
+    ctx.fill()
+    
+    # Pencil tip (graphite)
+    ctx.set_source_rgb(color[0], color[1], color[2])
+    ctx.move_to(x, y)
+    ctx.line_to(x - size * 0.2, y - size * 0.3)
+    ctx.line_to(x + size * 0.2, y - size * 0.3)
+    ctx.close_path()
+    ctx.fill()
+    
+    # Pencil outline
+    ctx.set_source_rgb(0.2, 0.2, 0.2)
+    ctx.set_line_width(1.5)
+    ctx.move_to(x, y)
+    ctx.line_to(x - size * 0.3, y - size * 0.8)
+    ctx.line_to(x + size * 0.3, y - size * 0.8)
+    ctx.close_path()
+    ctx.stroke()
+    
+    # Restore context state
+    ctx.restore()
+
+
+def draw_eraser_cursor(ctx, x, y, size=25):
+    """
+    Draw an eraser icon at the specified position.
+    
+    Args:
+        ctx: Cairo context
+        x, y: Position to draw the eraser
+        size: Size of the eraser icon
+    """
+    # Save context state
+    ctx.save()
+    
+    # Eraser body (pink/white)
+    ctx.set_source_rgb(0.95, 0.7, 0.8)  # Pink eraser color
+    ctx.rectangle(x - size * 0.4, y - size * 0.6, size * 0.8, size * 0.5)
+    ctx.fill()
+    
+    # Eraser bottom (darker)
+    ctx.set_source_rgb(0.7, 0.5, 0.6)
+    ctx.rectangle(x - size * 0.4, y - size * 0.1, size * 0.8, size * 0.2)
+    ctx.fill()
+    
+    # Eraser outline
+    ctx.set_source_rgb(0.2, 0.2, 0.2)
+    ctx.set_line_width(1.5)
+    ctx.rectangle(x - size * 0.4, y - size * 0.6, size * 0.8, size * 0.7)
+    ctx.stroke()
+    
+    # Restore context state
+    ctx.restore()
+
+
+def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=None, video_quality='high', cleanup_frames=False, show_cursor=False):
+    """
+    Render motion recording to video frames and optionally encode to video.
     
     Args:
         metadata_path: Path to motion_metadata.json file
         output_dir: Directory to save rendered frames
         fps: Override frame rate (uses metadata value if None)
+        encode_to_video: Path to output video file (None = frames only)
+        video_quality: Video quality - 'high', 'medium', 'low', or 'gif'
+        cleanup_frames: If True, delete frames after encoding video
+        show_cursor: If True, show pencil/eraser cursor at current drawing position
     """
     # Load motion data
     print(f"Loading motion data from {metadata_path}...")
@@ -84,12 +274,25 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Calculate frame times
+    # Calculate frame times based on FPS as sampling rate
+    # FPS represents how many frames to generate per second of recording time
+    # NOT duration × FPS, but a fixed sampling rate through the motion data
     duration_ms = max_time - min_time
-    num_frames = int((duration_ms * frame_rate) / 1000) + 1
-    frame_interval_ms = 1000 / frame_rate
+    duration_sec = duration_ms / 1000.0
+    total_motion_points = data['totalMotionPoints']
     
-    print(f"Rendering {num_frames} frames...")
+    # Simple FPS calculation: sample the motion data at FPS intervals
+    # This makes frame count proportional to duration at given sampling rate
+    if duration_sec > 0:
+        # Number of frames = duration in seconds × frames per second
+        # This gives us a consistent sampling rate regardless of motion point density
+        num_frames = int(duration_sec * frame_rate) + 1
+        frame_interval_ms = duration_ms / max(num_frames - 1, 1)
+    else:
+        num_frames = 1
+        frame_interval_ms = 1.0
+    
+    print(f"Rendering {num_frames} frames ({duration_sec:.2f}s at {frame_rate} fps, {total_motion_points} motion points)...")
     
     frame_number = 0
     current_page_idx = 0
@@ -128,23 +331,35 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                 current_page = page_info['page']
                 break
         
-        # Create canvas with page background
+        # Create canvas with page background using Cairo for high-quality rendering
         width = int(current_page['width'])
         height = int(current_page['height'])
         bg = current_page['background']['color']
-        # Use RGB mode for opaque output (convert RGBA to RGB)
-        bg_color_rgb = (bg['r'], bg['g'], bg['b'])
         
-        img = Image.new('RGB', (width, height), bg_color_rgb)
-        draw = ImageDraw.Draw(img)
+        # Create Cairo surface and context
+        surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+        ctx = cairo.Context(surface)
+        
+        # Fill background
+        ctx.set_source_rgb(bg['r'] / 255.0, bg['g'] / 255.0, bg['b'] / 255.0)
+        ctx.paint()
+        
+        # Set line rendering quality
+        ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+        ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+        ctx.set_antialias(cairo.ANTIALIAS_BEST)
+        
+        # Track the most recent drawing position and tool for cursor display
+        cursor_x, cursor_y = None, None
+        cursor_is_eraser = False
+        cursor_color = (0, 0, 0)  # Default black
         
         # Draw all strokes up to current_time on this page
         for stroke in current_page['strokes']:
-            # Use RGB color (without alpha channel)
-            stroke_color_rgb = (stroke['color']['r'],
-                               stroke['color']['g'],
-                               stroke['color']['b'])
-            base_width = stroke['width']  # Base width from stroke
+            # Get stroke properties
+            stroke_color = stroke.get('color', {})
+            base_width = stroke.get('width', 2.0)
+            stroke_tool = stroke.get('tool', 'pen')
             
             # Collect points up to current_time
             visible_points = []
@@ -160,26 +375,56 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                     prev = visible_points[i-1]
                     curr = visible_points[i]
                     
-                    # Handle eraser: draw in background color to "erase"
-                    if curr['isEraser'] or stroke['tool'] == 'eraser':
-                        draw_color = bg_color_rgb
+                    # Determine if this is an eraser stroke
+                    point_is_eraser = curr.get('isEraser', False)
+                    is_eraser_stroke = (stroke_tool == 'eraser') or point_is_eraser
+                    
+                    # Set color based on tool type
+                    # Eraser strokes use background color to simulate erasing
+                    # Pen/highlighter strokes use their designated stroke color
+                    if is_eraser_stroke:
+                        # Eraser: draw in background color to simulate erasing
+                        ctx.set_source_rgb(bg['r'] / 255.0, bg['g'] / 255.0, bg['b'] / 255.0)
                     else:
-                        draw_color = stroke_color_rgb
+                        # Pen/Highlighter: draw in stroke color
+                        ctx.set_source_rgb(
+                            stroke_color.get('r', 0) / 255.0,
+                            stroke_color.get('g', 0) / 255.0,
+                            stroke_color.get('b', 0) / 255.0
+                        )
                     
-                    # Calculate width based on pressure if available
+                    # Calculate width based on pressure
                     pressure = get_normalized_pressure(curr)
+                    stroke_width = max(0.5, base_width * pressure)
+                    ctx.set_line_width(stroke_width)
                     
-                    # Apply pressure to base width (ensure minimum 1px)
-                    stroke_width = int(max(1, base_width * pressure))
+                    # Draw line segment
+                    ctx.move_to(prev['x'], prev['y'])
+                    ctx.line_to(curr['x'], curr['y'])
+                    ctx.stroke()
                     
-                    # Draw line segment with pressure-sensitive width
-                    draw.line([(prev['x'], prev['y']), 
-                              (curr['x'], curr['y'])],
-                             fill=draw_color, width=stroke_width)
+                    # Update cursor position to the most recent point
+                    if show_cursor:
+                        cursor_x = curr['x']
+                        cursor_y = curr['y']
+                        cursor_is_eraser = is_eraser_stroke
+                        if not is_eraser_stroke:
+                            cursor_color = (
+                                stroke_color.get('r', 0) / 255.0,
+                                stroke_color.get('g', 0) / 255.0,
+                                stroke_color.get('b', 0) / 255.0
+                            )
+        
+        # Draw cursor (pencil or eraser) at the current drawing position
+        if show_cursor and cursor_x is not None and cursor_y is not None:
+            if cursor_is_eraser:
+                draw_eraser_cursor(ctx, cursor_x, cursor_y)
+            else:
+                draw_pencil_cursor(ctx, cursor_x, cursor_y, cursor_color)
         
         # Save frame
         frame_path = os.path.join(output_dir, f'frame_{frame_number:06d}.png')
-        img.save(frame_path)
+        surface.write_to_png(frame_path)
         frame_number += 1
         
         # Progress indicator
@@ -188,32 +433,74 @@ def render_motion_video(metadata_path, output_dir, fps=None):
             print(f"  Progress: {frame_number}/{num_frames} frames ({progress:.1f}%)")
     
     print(f"\n✓ Rendering complete! {frame_number} frames saved to {output_dir}/")
-    print(f"\nCreate video with FFmpeg:")
-    print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
-    print(f"\nCreate high-quality video:")
-    print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -crf 18 -preset slow output.mp4")
-    print(f"\nCreate GIF:")
-    print(f"  ffmpeg -framerate 10 -i {output_dir}/frame_%06d.png -vf \"scale=800:-1:flags=lanczos\" output.gif")
+    
+    # Encode to video if requested
+    if encode_to_video:
+        encode_video(output_dir, encode_to_video, frame_rate, video_quality, cleanup_frames)
+    else:
+        # Show manual FFmpeg commands
+        print(f"\nCreate video with FFmpeg:")
+        print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
+        print(f"\nCreate high-quality video:")
+        print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -crf 18 -preset slow output.mp4")
+        print(f"\nCreate GIF:")
+        print(f"  ffmpeg -framerate 10 -i {output_dir}/frame_%06d.png -vf \"scale=800:-1:flags=lanczos\" output.gif")
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python render_motion_video.py <motion_metadata.json> <output_dir> [fps]")
-        print("\nExample:")
-        print("  python render_motion_video.py motion_metadata.json output_frames/")
-        print("  python render_motion_video.py motion_metadata.json output_frames/ 60")
-        sys.exit(1)
+    import argparse
     
-    metadata_path = sys.argv[1]
-    output_dir = sys.argv[2]
-    fps = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    parser = argparse.ArgumentParser(
+        description='Render Xournal++ motion recording data to video frames or video file.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Render frames only
+  python render_motion_video.py motion_metadata.json output_frames/
+  
+  # Render frames at 60 FPS
+  python render_motion_video.py motion_metadata.json output_frames/ --fps 60
+  
+  # Render and encode to video
+  python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4
+  
+  # Render and encode high-quality video, then cleanup frames
+  python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4 --quality high --cleanup
+  
+  # Render and encode to GIF
+  python render_motion_video.py motion_metadata.json output_frames/ --video output.gif --quality gif
+        """
+    )
     
-    if not os.path.exists(metadata_path):
-        print(f"Error: File not found: {metadata_path}")
+    parser.add_argument('metadata', help='Path to motion_metadata.json file')
+    parser.add_argument('output_dir', help='Directory to save rendered frames')
+    parser.add_argument('--fps', type=int, default=None, 
+                        help='Override frame rate (uses metadata value if not specified)')
+    parser.add_argument('--video', '-v', default=None,
+                        help='Encode frames to video file (requires FFmpeg)')
+    parser.add_argument('--quality', '-q', choices=['high', 'medium', 'low', 'gif'], default='high',
+                        help='Video encoding quality (default: high)')
+    parser.add_argument('--cleanup', '-c', action='store_true',
+                        help='Delete frame images after encoding video')
+    parser.add_argument('--cursor', action='store_true',
+                        help='Show pencil/eraser cursor at current drawing position')
+    
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.metadata):
+        print(f"Error: File not found: {args.metadata}")
         sys.exit(1)
     
     try:
-        render_motion_video(metadata_path, output_dir, fps)
+        render_motion_video(
+            args.metadata, 
+            args.output_dir, 
+            fps=args.fps,
+            encode_to_video=args.video,
+            video_quality=args.quality,
+            cleanup_frames=args.cleanup,
+            show_cursor=args.cursor
+        )
     except Exception as e:
         print(f"Error: {e}")
         import traceback
