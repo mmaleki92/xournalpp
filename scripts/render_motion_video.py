@@ -1,35 +1,8 @@
 #!/usr/bin/env python3
 """
-Render Xournal++ motion recording data to video frames.
-
-This script reads the motion_metadata.json file exported from Xournal++
-and renders it frame-by-frame, creating images that can be converted to video.
-
-Features:
-    - Pressure-sensitive rendering: stroke width varies based on stylus pressure
-    - Multi-page support: handles documents with multiple pages
-    - Progressive drawing: shows strokes being drawn over time
-    - Eraser support: renders eraser strokes correctly
-    - High-quality rendering with Cairo for smooth, anti-aliased output
-
-Requirements:
-    pip install pycairo
-    
-    For video encoding (optional):
-    - FFmpeg (https://ffmpeg.org/)
-
-Usage:
-    # Render frames only
-    python render_motion_video.py motion_metadata.json output_frames/
-    
-    # Render and encode to video directly
-    python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4
-    
-    # Render at custom FPS and encode high-quality video
-    python render_motion_video.py motion_metadata.json output_frames/ --fps 60 --video output.mp4 --quality high
-    
-    # Encode to GIF and cleanup frames
-    python render_motion_video.py motion_metadata.json output_frames/ --video output.gif --quality gif --cleanup
+Render Xournal++ motion recording to High-Res video/GIF with Realistic Cursors.
+Supports normalized per-stroke timing (skips idle time automatically).
+Supports audio generation (requires pydub).
 """
 
 import json
@@ -38,282 +11,454 @@ import sys
 import subprocess
 import shutil
 import cairo
+import math
 
+# Try to import pydub for audio processing
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
 
 def get_normalized_pressure(point):
-    """
-    Get normalized pressure from a motion point.
-    
-    Args:
-        point: Dictionary containing motion point data with optional 'p' field
-    
-    Returns:
-        float: Pressure value between 0.0 and 1.0
-               - Returns 1.0 if 'p' field is missing (old format, no pressure data)
-               - Returns 1.0 if 'p' is -1.0 (pressure sensor not available)
-               - Returns the actual pressure value if 'p' is in range [0.0, 1.0]
-    """
+    """Get normalized pressure from a motion point."""
     pressure = point.get('p', -1.0)
-    # Treat missing field (default -1.0) or any negative pressure value as full pressure (1.0)
-    # This handles: no pressure sensor (p=-1.0), old format (no 'p' field), or invalid values
+    # Treat missing field or negative pressure as full pressure
     return 1.0 if pressure < 0.0 else pressure
 
-
-def encode_video(frames_dir, output_video, frame_rate, quality='high', cleanup_frames=False):
-    """
-    Encode rendered frames into a video file using FFmpeg.
-    
-    Args:
-        frames_dir: Directory containing the frame images
-        output_video: Path to output video file
-        frame_rate: Video frame rate
-        quality: Video quality - 'high', 'medium', 'low', or 'gif'
-        cleanup_frames: If True, delete frame images after encoding
-    
-    Returns:
-        bool: True if encoding succeeded, False otherwise
-    """
-    # Check if FFmpeg is available
+def encode_video(frames_dir, output_video, frame_rate, audio_file=None, quality='high', cleanup_frames=False):
+    """Encode rendered frames into a video file using FFmpeg."""
     if not shutil.which('ffmpeg'):
-        print("Error: FFmpeg not found. Please install FFmpeg to encode videos.")
-        print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
-        print("  macOS: brew install ffmpeg")
-        print("  Windows: Download from https://ffmpeg.org/")
+        print("Error: FFmpeg not found. Please install FFmpeg.")
         return False
     
     print(f"\nEncoding video to {output_video}...")
+
+    # Pad Filter: Ensures width/height are divisible by 2 (Fixes crashes)
+    pad_filter = 'pad=ceil(iw/2)*2:ceil(ih/2)*2'
     
-    # Build FFmpeg command based on quality setting
+    input_args = ['-framerate', str(frame_rate), '-i', os.path.join(frames_dir, 'frame_%06d.png')]
+    
+    # Add audio input if provided
+    if audio_file and os.path.exists(audio_file):
+        input_args.extend(['-i', audio_file])
+        # Map video from stream 0, audio from stream 1
+        map_args = ['-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest']
+    else:
+        map_args = []
+
     if quality == 'gif':
-        # Create animated GIF
-        # Limit framerate to 20 FPS for reasonable file size (GIFs don't benefit from higher FPS)
-        # Scale to 800px width to reduce file size while maintaining readability
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', str(min(frame_rate, 20)),
-            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
-            '-vf', 'scale=800:-1:flags=lanczos',
-            output_video
-        ]
-    elif quality == 'high':
-        # High quality H.264
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', str(frame_rate),
-            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
-            '-c:v', 'libx264',
-            '-crf', '18',
-            '-preset', 'slow',
-            '-pix_fmt', 'yuv420p',
-            output_video
-        ]
-    elif quality == 'medium':
-        # Medium quality H.264
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', str(frame_rate),
-            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
-            '-c:v', 'libx264',
-            '-crf', '23',
-            '-preset', 'medium',
-            '-pix_fmt', 'yuv420p',
-            output_video
-        ]
-    else:  # low
-        # Low quality/fast encode
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', str(frame_rate),
-            '-i', os.path.join(frames_dir, 'frame_%06d.png'),
-            '-c:v', 'libx264',
-            '-crf', '28',
-            '-preset', 'fast',
-            '-pix_fmt', 'yuv420p',
-            output_video
-        ]
+        # GIF: Palette generation for perfect colors
+        filter_graph = (
+            f"[0:v] fps={min(frame_rate, 20)}, "
+            f"{pad_filter}, "
+            f"split [a][b];[a] palettegen [p];[b][p] paletteuse"
+        )
+        cmd = ['ffmpeg', '-y'] + input_args + ['-filter_complex', filter_graph, output_video]
+    else:
+        # VIDEO (MP4)
+        crf = '17' if quality == 'high' else '23'
+        preset = 'veryslow' if quality == 'high' else 'fast'
+        
+        cmd = (
+            ['ffmpeg', '-y'] + 
+            input_args + 
+            ['-c:v', 'libx264', '-vf', pad_filter, '-crf', crf, '-preset', preset, '-pix_fmt', 'yuv420p'] +
+            map_args +
+            [output_video]
+        )
     
     try:
-        # Run FFmpeg
         result = subprocess.run(cmd, capture_output=True, text=True)
-        
         if result.returncode == 0:
             print(f"✓ Video encoded successfully: {output_video}")
-            
-            # Cleanup frames if requested
             if cleanup_frames:
-                print(f"Cleaning up frame images from {frames_dir}...")
+                print("Cleaning up frames...")
                 for file in os.listdir(frames_dir):
                     if file.startswith('frame_') and file.endswith('.png'):
                         os.remove(os.path.join(frames_dir, file))
-                print("✓ Frame cleanup complete")
-            
             return True
         else:
-            print(f"✗ FFmpeg encoding failed:")
-            print(result.stderr)
+            print(f"✗ FFmpeg encoding failed:\n{result.stderr}")
             return False
-            
     except Exception as e:
-        print(f"✗ Error during video encoding: {e}")
+        print(f"✗ Error: {e}")
         return False
 
+def generate_audio_track(stroke_timeline, total_duration_ms, tap_file, scratch_file, output_path):
+    """
+    Generates a WAV audio track synchronized with the strokes.
+    Modulates scratch volume based on stroke velocity and pressure.
+    """
+    if not PYDUB_AVAILABLE:
+        print("Warning: 'pydub' library not found. Skipping audio generation.")
+        print("To enable audio, run: pip install pydub")
+        return None
 
-def draw_pencil_cursor(ctx, x, y, color, size=20):
-    """
-    Draw a pencil icon at the specified position.
+    if not tap_file or not scratch_file:
+        return None
+        
+    print(f"Generating audio track from {tap_file} and {scratch_file}...")
     
-    Args:
-        ctx: Cairo context
-        x, y: Position to draw the pencil tip
-        color: RGB color tuple (r, g, b) normalized 0-1
-        size: Size of the pencil icon
+    try:
+        tap_sound = AudioSegment.from_file(tap_file)
+        scratch_sound = AudioSegment.from_file(scratch_file)
+    except Exception as e:
+        print(f"Error loading audio files: {e}")
+        return None
+
+    # Create silent base track (add 1s buffer at end)
+    base_track = AudioSegment.silent(duration=total_duration_ms + 1000)
+    
+    count_tap = 0
+    count_scratch = 0
+
+    for info in stroke_timeline:
+        start_ms = int(info['startTime'])
+        end_ms = int(info['endTime'])
+        duration = end_ms - start_ms
+        
+        if duration <= 0: continue
+        
+        # Heuristic: Very short strokes are taps
+        if duration < 300:
+            # TAP
+            base_track = base_track.overlay(tap_sound, position=start_ms)
+            count_tap += 1
+        else:
+            # DYNAMIC SCRATCH
+            # We construct the sound chunk-by-chunk based on movement speed
+            count_scratch += 1
+            
+            # 1. Prepare raw audio loop for this stroke
+            needed_audio = scratch_sound
+            while len(needed_audio) < duration:
+                needed_audio += scratch_sound
+            raw_stroke_audio = needed_audio[:duration]
+            
+            # 2. Process in 50ms chunks to modulate volume
+            chunk_ms = 10
+            points = info['normalizedPoints']
+            processed_chunks = []
+            
+            # State for tracking points iteration
+            p_idx = 0
+            num_points = len(points)
+            if num_points > 0:
+                last_x, last_y = points[0]['x'], points[0]['y']
+            else:
+                last_x, last_y = 0, 0
+
+            # Iterate through time slices
+            for t_start in range(0, duration, chunk_ms):
+                t_end = min(t_start + chunk_ms, duration)
+                curr_chunk_dur = t_end - t_start
+                if curr_chunk_dur <= 0: break
+                
+                # Extract raw audio slice
+                chunk_audio = raw_stroke_audio[t_start:t_end]
+                
+                # Calculate metrics for this time window
+                dist = 0.0
+                pressure_sum = 0.0
+                pressure_count = 0
+                
+                # Advance p_idx to t_start
+                while p_idx < num_points and points[p_idx]['t'] < t_start:
+                    last_x = points[p_idx]['x']
+                    last_y = points[p_idx]['y']
+                    p_idx += 1
+                
+                # Process points within this chunk window
+                curr_p_idx = p_idx
+                while curr_p_idx < num_points and points[curr_p_idx]['t'] < t_end:
+                    p = points[curr_p_idx]
+                    
+                    # Distance
+                    d = math.hypot(p['x'] - last_x, p['y'] - last_y)
+                    dist += d
+                    last_x = p['x']
+                    last_y = p['y']
+                    
+                    # Pressure
+                    pr = get_normalized_pressure(p)
+                    pressure_sum += pr
+                    pressure_count += 1
+                    
+                    curr_p_idx += 1
+                
+                # Speed (pixels per ms)
+                speed = dist / curr_chunk_dur
+                
+                # Avg Pressure
+                avg_pressure = (pressure_sum / pressure_count) if pressure_count > 0 else 0.5
+                
+                # --- Volume Calculation ---
+                target_gain_db = -100.0 # Silence default
+                
+                # Threshold: if moving slower than 0.02 px/ms, consider it a pause
+                if speed > 0.02: 
+                    # Speed factor: 0.0 to 1.0 (capped at 0.5 px/ms)
+                    speed_factor = min(speed / 0.5, 1.0)
+                    
+                    # Pressure factor: 0.2 to 1.0
+                    pressure_factor = 0.2 + (avg_pressure * 0.8)
+                    
+                    combined = speed_factor * pressure_factor
+                    
+                    # Log mapping: 1.0 -> 0dB, 0.1 -> -20dB
+                    if combined > 0.001:
+                        target_gain_db = 20 * math.log10(combined)
+                
+                # Apply gain to chunk
+                chunk_audio = chunk_audio + target_gain_db
+                processed_chunks.append(chunk_audio)
+                
+            # Concatenate all chunks
+            if processed_chunks:
+                # 'sum' with start value required for AudioSegment lists in newer pydub versions usually,
+                # but simple sum works if list not empty.
+                full_stroke_audio = sum(processed_chunks)
+                
+                # Smooth fades at ends of the stroke
+                fade_len = min(50, duration // 4)
+                full_stroke_audio = full_stroke_audio.fade_in(fade_len).fade_out(fade_len)
+                
+                base_track = base_track.overlay(full_stroke_audio, position=start_ms)
+            
+    print(f"  Audio generated: {count_tap} taps, {count_scratch} strokes.")
+    
+    # Export temp file
+    base_track.export(output_path, format="wav")
+    return output_path
+
+def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
     """
-    # Save context state
+    Draws a realistic, faceted (hexagonal) pencil with WOOD TEXTURE.
+    Tip is at (x,y). Body points to lower-right.
+    """
     ctx.save()
+    ctx.translate(x, y)
     
-    # Pencil body (wood part)
-    ctx.set_source_rgb(0.8, 0.6, 0.2)  # Wood color
-    ctx.move_to(x, y)
-    ctx.line_to(x - size * 0.3, y - size * 0.8)
-    ctx.line_to(x + size * 0.3, y - size * 0.8)
+    # Base configuration
+    main_angle_deg = 135
+    
+    s = scale * cursor_scale * 2.5
+    ctx.scale(s, s)
+    
+    # --- GEOMETRY DEFINITIONS ---
+    width = 14
+    half_w = width / 2
+    length = 200 
+    cone_h = 35 
+    lead_h = 10 
+    
+    # --- 1. DRAW SHADOW ---
+    ctx.save()
+    ctx.rotate(math.radians(main_angle_deg - 3))
+    shadow_len = length * 0.25
+    grad_shadow = cairo.LinearGradient(0, 0, 0, -shadow_len)
+    grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.6)
+    grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
+    ctx.set_source(grad_shadow)
+    ctx.move_to(0, 0)
+    ctx.line_to(half_w * 0.35, -lead_h) 
+    ctx.line_to(half_w, -cone_h) 
+    ctx.line_to(half_w, -shadow_len) 
+    ctx.line_to(-half_w, -shadow_len) 
+    ctx.line_to(-half_w, -cone_h) 
+    ctx.line_to(-half_w * 0.35, -lead_h) 
     ctx.close_path()
     ctx.fill()
-    
-    # Pencil tip (graphite)
-    ctx.set_source_rgb(color[0], color[1], color[2])
-    ctx.move_to(x, y)
-    ctx.line_to(x - size * 0.2, y - size * 0.3)
-    ctx.line_to(x + size * 0.2, y - size * 0.3)
-    ctx.close_path()
-    ctx.fill()
-    
-    # Pencil outline
-    ctx.set_source_rgb(0.2, 0.2, 0.2)
-    ctx.set_line_width(1.5)
-    ctx.move_to(x, y)
-    ctx.line_to(x - size * 0.3, y - size * 0.8)
-    ctx.line_to(x + size * 0.3, y - size * 0.8)
-    ctx.close_path()
-    ctx.stroke()
-    
-    # Restore context state
     ctx.restore()
 
+    # --- 2. DRAW PENCIL ---
+    ctx.rotate(math.radians(main_angle_deg))
 
-def draw_eraser_cursor(ctx, x, y, size=25):
-    """
-    Draw an eraser icon at the specified position.
-    
-    Args:
-        ctx: Cairo context
-        x, y: Position to draw the eraser
-        size: Size of the eraser icon
-    """
-    # Save context state
+    # A. LEAD TIP
+    blunt_w = 1.5 
+    ctx.move_to(-blunt_w/2, 0)
+    ctx.line_to(blunt_w/2, 0)
+    ctx.line_to(half_w * 0.35, -lead_h)
+    ctx.line_to(-half_w * 0.35, -lead_h)
+    ctx.close_path()
+    ctx.set_source_rgb(0.15, 0.15, 0.18) 
+    ctx.fill()
+        
+    # B. WOOD CONE WITH TEXTURE
     ctx.save()
+    ctx.move_to(-half_w * 0.35, -lead_h)
+    ctx.line_to(half_w * 0.35, -lead_h)
+    ctx.line_to(half_w, -cone_h)
+    ctx.line_to(-half_w, -cone_h)
+    ctx.close_path()
     
-    # Eraser body (pink/white)
-    ctx.set_source_rgb(0.95, 0.7, 0.8)  # Pink eraser color
-    ctx.rectangle(x - size * 0.4, y - size * 0.6, size * 0.8, size * 0.5)
-    ctx.fill()
+    # Base Wood Gradient
+    pat_wood = cairo.LinearGradient(0, -lead_h, 0, -cone_h)
+    pat_wood.add_color_stop_rgb(0.0, 0.85, 0.70, 0.55) 
+    pat_wood.add_color_stop_rgb(0.3, 0.95, 0.85, 0.70) 
+    pat_wood.add_color_stop_rgb(1.0, 0.90, 0.80, 0.65) 
+    ctx.set_source(pat_wood)
+    ctx.fill_preserve() # Keep path for clipping if needed, but we draw over it
     
-    # Eraser bottom (darker)
-    ctx.set_source_rgb(0.7, 0.5, 0.6)
-    ctx.rectangle(x - size * 0.4, y - size * 0.1, size * 0.8, size * 0.2)
-    ctx.fill()
+    # -- WOOD GRAIN TEXTURE --
+    # Draw curved lines over the wood cone to simulate grain
+    ctx.clip() # Clip drawing to the cone shape
+    ctx.set_source_rgba(0.65, 0.5, 0.35, 0.6) # Darker brownish wood color, semi-transparent
+    ctx.set_line_width(0.4)
     
-    # Eraser outline
-    ctx.set_source_rgb(0.2, 0.2, 0.2)
-    ctx.set_line_width(1.5)
-    ctx.rectangle(x - size * 0.4, y - size * 0.6, size * 0.8, size * 0.7)
-    ctx.stroke()
-    
-    # Restore context state
+    # Draw a few deterministic curves
+    for i in range(4):
+        # Calculate start/control points based on index to spread them out
+        offset_x = (i - 1.5) * 3 
+        ctx.move_to(offset_x, -lead_h)
+        # Curve goes from top of wood (-lead_h) to bottom (-cone_h) with a slight bend
+        ctx.curve_to(offset_x + 1, -lead_h - 10, offset_x - 2, -cone_h + 10, offset_x * 0.5, -cone_h)
+        ctx.stroke()
+        
     ctx.restore()
 
-
-def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=None, video_quality='high', cleanup_frames=False, show_cursor=False):
-    """
-    Render motion recording to video frames and optionally encode to video.
+    # C. FACETED BODY
+    face_w = width / 3.0 
     
-    Args:
-        metadata_path: Path to motion_metadata.json file
-        output_dir: Directory to save rendered frames
-        fps: Override frame rate (uses metadata value if None)
-        encode_to_video: Path to output video file (None = frames only)
-        video_quality: Video quality - 'high', 'medium', 'low', or 'gif'
-        cleanup_frames: If True, delete frames after encoding video
-        show_cursor: If True, show pencil/eraser cursor at current drawing position
-    """
-    # Load motion data
-    print(f"Loading motion data from {metadata_path}...")
-    with open(metadata_path, 'r') as f:
-        data = json.load(f)
+    # Left Face
+    ctx.move_to(-half_w, -cone_h)
+    ctx.curve_to(-half_w, -cone_h + 5, -half_w + face_w, -cone_h + 5, -half_w + face_w, -cone_h)
+    ctx.line_to(-half_w + face_w, -length)
+    ctx.line_to(-half_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(0.0, 0.1, 0.4) 
+    ctx.fill()
+
+    # Center Face
+    ctx.move_to(-half_w + face_w, -cone_h)
+    ctx.curve_to(-half_w + face_w, -cone_h + 5, half_w - face_w, -cone_h + 5, half_w - face_w, -cone_h)
+    ctx.line_to(half_w - face_w, -length)
+    ctx.line_to(-half_w + face_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(0.1, 0.3, 0.8) 
+    ctx.fill()
+    
+    # Specular highlight
+    ctx.save()
+    ctx.rectangle(-half_w + face_w + 1, -length, 2, length - cone_h)
+    ctx.set_source_rgba(1, 1, 1, 0.2)
+    ctx.fill()
+    ctx.restore()
+
+    # Right Face
+    ctx.move_to(half_w - face_w, -cone_h)
+    ctx.curve_to(half_w - face_w, -cone_h + 5, half_w, -cone_h + 5, half_w, -cone_h)
+    ctx.line_to(half_w, -length)
+    ctx.line_to(half_w - face_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(0.05, 0.2, 0.6) 
+    ctx.fill()
+
+    # D. END
+    ctx.move_to(-half_w, -length)
+    ctx.line_to(half_w, -length)
+    ctx.save()
+    ctx.translate(0, -length)
+    ctx.scale(1, 0.3) 
+    ctx.arc(0, 0, half_w, 0, 2 * math.pi)
+    ctx.restore()
+    ctx.set_source_rgb(0.7, 0.6, 0.5) 
+    ctx.fill()
+    
+    ctx.restore()
+
+def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
+    """Draws a realistic rectangular block eraser with shadow."""
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate(math.radians(-15))
+    s = scale * cursor_scale * 2.0
+    ctx.scale(s, s)
+    ctx.translate(-20, -45)
+    
+    w = 40
+    h = 60
+    depth = 15
+
+    def draw_eraser_shape(is_shadow=False):
+        if is_shadow:
+            ctx.set_source_rgba(0, 0, 0, 0.2)
+            ctx.move_to(0, h)
+            ctx.line_to(w, h)
+            ctx.line_to(w + depth, h - 5)
+            ctx.line_to(w + depth, -5)
+            ctx.line_to(depth, -5)
+            ctx.line_to(0, 0)
+            ctx.close_path()
+            ctx.fill()
+            return
+
+        # Front
+        ctx.rectangle(0, 0, w, h)
+        pat = cairo.LinearGradient(0, 0, w, h)
+        pat.add_color_stop_rgb(0, 0.95, 0.95, 0.95)
+        pat.add_color_stop_rgb(1, 0.85, 0.85, 0.85)
+        ctx.set_source(pat)
+        ctx.fill()
+        # Side
+        ctx.move_to(w, 0)
+        ctx.line_to(w + depth, -5)
+        ctx.line_to(w + depth, h - 5)
+        ctx.line_to(w, h)
+        ctx.close_path()
+        ctx.set_source_rgb(0.8, 0.8, 0.8)
+        ctx.fill()
+        # Top
+        ctx.move_to(0, 0)
+        ctx.line_to(depth, -5)
+        ctx.line_to(w + depth, -5)
+        ctx.line_to(w, 0)
+        ctx.close_path()
+        ctx.set_source_rgb(0.9, 0.9, 0.9)
+        ctx.fill()
+        # Sleeve
+        sleeve_h = h * 0.5
+        sleeve_y = h * 0.3
+        ctx.rectangle(0, sleeve_y, w, sleeve_h)
+        ctx.set_source_rgb(0.2, 0.3, 0.8) 
+        ctx.fill()
+        ctx.move_to(w, sleeve_y)
+        ctx.line_to(w + depth, sleeve_y - 2)
+        ctx.line_to(w + depth, sleeve_y + sleeve_h - 2)
+        ctx.line_to(w, sleeve_y + sleeve_h)
+        ctx.close_path()
+        ctx.set_source_rgb(0.15, 0.25, 0.6) 
+        ctx.fill()
+        ctx.set_source_rgba(1, 1, 1, 0.6)
+        ctx.move_to(5, sleeve_y + 10)
+        ctx.line_to(w - 5, sleeve_y + 10)
+        ctx.set_line_width(2)
+        ctx.stroke()
+
+    ctx.save()
+    ctx.translate(6, 6)
+    draw_eraser_shape(is_shadow=True)
+    ctx.restore()
+    draw_eraser_shape(is_shadow=False)
+    ctx.restore()
+
+def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=None, video_quality='high', cleanup_frames=False, show_cursor=False, scale_factor=2.0, cursor_scale=1.0, audio_tap=None, audio_scratch=None):
+    """Render frames with scaling factor and realistic cursors."""
+    
+    print(f"Loading data from {metadata_path}...")
+    with open(metadata_path, 'r') as f: data = json.load(f)
     
     frame_rate = fps if fps is not None else data['frameRate']
     
-    # New format: timestamps are normalized per-stroke, use totalDurationMs
-    # Old format compatibility: fall back to minTimestamp/maxTimestamp if present
-    if 'totalDurationMs' in data:
-        # New format: idle time between strokes is excluded
-        duration_ms = data['totalDurationMs']
-    else:
-        # Old format compatibility
-        min_time = data.get('minTimestamp', 0)
-        max_time = data.get('maxTimestamp', 0)
-        duration_ms = max_time - min_time
-    
-    duration_sec = duration_ms / 1000.0
-    total_motion_points = data['totalMotionPoints']
-    
-    # Check for pressure data in the motion points
-    # Pressure values: -1.0 = no sensor/missing, 0.0-1.0 = valid pressure data
-    # If any point has valid pressure (>= 0.0), we consider the data to have pressure info
-    has_pressure = any(
-        point.get('p', -1.0) >= 0.0
-        for page in data['pages']
-        for stroke in page.get('strokes', [])
-        for point in stroke.get('motionPoints', [])
-    )
-    
-    print(f"Motion data info:")
-    print(f"  Frame rate: {frame_rate} fps")
-    print(f"  Total duration: {duration_ms}ms ({duration_sec:.2f}s, excluding idle time)")
-    print(f"  Total motion points: {total_motion_points}")
-    print(f"  Pages: {len(data['pages'])}")
-    print(f"  Pressure data: {'Yes' if has_pressure else 'No (using fixed width)'}")
-    
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Calculate frame times based on FPS as sampling rate
-    # FPS represents how many frames to generate per second of recording time
-    if duration_sec > 0:
-        # Number of frames = duration in seconds × frames per second
-        # This gives us a consistent sampling rate regardless of motion point density
-        num_frames = int(duration_sec * frame_rate) + 1
-        frame_interval_ms = duration_ms / max(num_frames - 1, 1)
-    else:
-        num_frames = 1
-        frame_interval_ms = 1.0
-    
-    print(f"Rendering {num_frames} frames ({duration_sec:.2f}s at {frame_rate} fps, {total_motion_points} motion points)...")
-    
-    frame_number = 0
-    
-    # Pre-process: build a cumulative timeline for all strokes across all pages
-    # Since timestamps are now normalized per-stroke (starting from 0), we need to
-    # calculate absolute times by accumulating stroke durations
     stroke_timeline = []
     cumulative_time = 0
     
     for page in data['pages']:
         for stroke in page.get('strokes', []):
             motion_points = stroke.get('motionPoints', [])
-            # Skip strokes with no motion points or only a single point
             if len(motion_points) >= 2:
                 try:
-                    # Calculate duration using min/max in a single pass to handle potentially unsorted timestamps
                     min_t = min(p['t'] for p in motion_points)
                     max_t = max(p['t'] for p in motion_points)
                     stroke_duration = max_t - min_t
@@ -322,217 +467,137 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                         'stroke': stroke,
                         'startTime': cumulative_time,
                         'endTime': cumulative_time + stroke_duration,
-                        'normalizedPoints': motion_points  # Points with timestamps starting from 0
+                        'normalizedPoints': motion_points 
                     })
                     cumulative_time += stroke_duration
-                except (KeyError, TypeError, ValueError) as e:
-                    # Skip malformed motion points (missing 't' key, wrong type, etc.)
-                    print(f"Warning: Skipping stroke with malformed motion points: {e}")
+                except (KeyError, ValueError):
                     continue
+
+    duration_ms = cumulative_time
+    duration_sec = duration_ms / 1000.0
     
-    # Render each frame
+    num_frames = int(duration_sec * frame_rate) + 1
+    if num_frames < 1: num_frames = 1
+    frame_interval_ms = duration_ms / max(num_frames - 1, 1)
+    
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Rendering {num_frames} frames at {scale_factor}x resolution ({frame_rate} fps)...")
+    print(f"Total Video Duration: {duration_sec:.2f}s (Idle time skipped)")
+
+    # --- AUDIO GENERATION ---
+    generated_audio_file = None
+    if audio_tap and audio_scratch:
+        audio_out_path = os.path.join(output_dir, "generated_audio.wav")
+        generated_audio_file = generate_audio_track(stroke_timeline, duration_ms, audio_tap, audio_scratch, audio_out_path)
+    # ------------------------
+
+    frame_number = 0
+    
     for frame_idx in range(num_frames):
         current_time = frame_idx * frame_interval_ms
         
-        # Find which page we're on based on the current time
-        current_page = data['pages'][0]  # Default to first page
+        current_page = data['pages'][0] 
         for stroke_info in stroke_timeline:
             if stroke_info['startTime'] <= current_time <= stroke_info['endTime']:
                 current_page = stroke_info['page']
                 break
         
-        # Create canvas with page background using Cairo for high-quality rendering
-        width = int(current_page['width'])
-        height = int(current_page['height'])
-        bg = current_page['background']['color']
+        base_w, base_h = int(current_page['width']), int(current_page['height'])
+        scaled_w, scaled_h = int(base_w * scale_factor), int(base_h * scale_factor)
         
-        # Create Cairo surface and context
-        surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+        surface = cairo.ImageSurface(cairo.FORMAT_RGB24, scaled_w, scaled_h)
         ctx = cairo.Context(surface)
+        ctx.scale(scale_factor, scale_factor)
         
-        # Fill background
-        ctx.set_source_rgb(bg['r'] / 255.0, bg['g'] / 255.0, bg['b'] / 255.0)
+        bg = current_page['background']['color']
+        ctx.set_source_rgb(bg['r']/255, bg['g']/255, bg['b']/255)
         ctx.paint()
-        
-        # Set line rendering quality
         ctx.set_line_cap(cairo.LINE_CAP_ROUND)
         ctx.set_line_join(cairo.LINE_JOIN_ROUND)
         ctx.set_antialias(cairo.ANTIALIAS_BEST)
         
-        # Track the most recent drawing position and tool for cursor display
-        cursor_x, cursor_y = None, None
+        cursor_pos = None
         cursor_is_eraser = False
-        cursor_color = (0, 0, 0)  # Default black
+        cursor_color = (0,0,0)
         
-        # Draw all strokes up to current_time using the cumulative timeline
         for stroke_info in stroke_timeline:
-            # Only draw strokes on the current page
             if stroke_info['page']['pageIndex'] != current_page['pageIndex']:
                 continue
-            
-            stroke = stroke_info['stroke']
-            stroke_start_time = stroke_info['startTime']
-            stroke_end_time = stroke_info['endTime']
-            
-            # Skip strokes that haven't started yet
-            if current_time < stroke_start_time:
+            if current_time < stroke_info['startTime']:
                 continue
-            
-            # Get stroke properties
-            stroke_color = stroke.get('color', {})
-            base_width = stroke.get('width', 2.0)
-            stroke_tool = stroke.get('tool', 'pen')
-            
-            # Collect points up to current_time within this stroke
-            # Convert current_time to stroke-relative time
-            # Note: stroke_relative_time is guaranteed to be non-negative due to check at line 378
-            stroke_relative_time = current_time - stroke_start_time
-            
+
+            stroke = stroke_info['stroke']
+            stroke_rel_time = current_time - stroke_info['startTime']
+            points = stroke_info['normalizedPoints']
             visible_points = []
-            for point in stroke_info['normalizedPoints']:
-                if point['t'] <= stroke_relative_time:
-                    visible_points.append(point)
-                else:
-                    break
             
-            # Draw the stroke progressively
-            if len(visible_points) > 1:
-                for i in range(1, len(visible_points)):
-                    prev = visible_points[i-1]
-                    curr = visible_points[i]
-                    
-                    # Determine if this is an eraser stroke
-                    point_is_eraser = curr.get('isEraser', False)
-                    is_eraser_stroke = (stroke_tool == 'eraser') or point_is_eraser
-                    
-                    # Set color based on tool type
-                    # Eraser strokes use background color to simulate erasing
-                    # Pen/highlighter strokes use their designated stroke color
-                    if is_eraser_stroke:
-                        # Eraser: draw in background color to simulate erasing
-                        ctx.set_source_rgb(bg['r'] / 255.0, bg['g'] / 255.0, bg['b'] / 255.0)
-                    else:
-                        # Pen/Highlighter: draw in stroke color
-                        ctx.set_source_rgb(
-                            stroke_color.get('r', 0) / 255.0,
-                            stroke_color.get('g', 0) / 255.0,
-                            stroke_color.get('b', 0) / 255.0
-                        )
-                    
-                    # Calculate width based on pressure
-                    pressure = get_normalized_pressure(curr)
-                    stroke_width = max(0.5, base_width * pressure)
-                    ctx.set_line_width(stroke_width)
-                    
-                    # Draw line segment
-                    ctx.move_to(prev['x'], prev['y'])
-                    ctx.line_to(curr['x'], curr['y'])
-                    ctx.stroke()
-                    
-                    # Update cursor position to the most recent point
-                    if show_cursor and current_time >= stroke_start_time and current_time <= stroke_end_time:
-                        cursor_x = curr['x']
-                        cursor_y = curr['y']
-                        cursor_is_eraser = is_eraser_stroke
-                        if not is_eraser_stroke:
-                            cursor_color = (
-                                stroke_color.get('r', 0) / 255.0,
-                                stroke_color.get('g', 0) / 255.0,
-                                stroke_color.get('b', 0) / 255.0
-                            )
-        
-        # Draw cursor (pencil or eraser) at the current drawing position
-        if show_cursor and cursor_x is not None and cursor_y is not None:
-            if cursor_is_eraser:
-                draw_eraser_cursor(ctx, cursor_x, cursor_y)
+            for p in points:
+                if p['t'] <= stroke_rel_time:
+                    visible_points.append(p)
+                else:
+                    break 
+            
+            if len(visible_points) < 2: continue
+            
+            s_color = stroke.get('color', {'r':0,'g':0,'b':0})
+            base_width = stroke.get('width', 1.5)
+            is_eraser = stroke.get('tool') == 'eraser' or visible_points[-1].get('isEraser', False)
+            
+            if is_eraser:
+                ctx.set_source_rgb(bg['r']/255, bg['g']/255, bg['b']/255)
+                draw_width = base_width * 4 if stroke.get('tool') != 'eraser' else base_width
             else:
-                draw_pencil_cursor(ctx, cursor_x, cursor_y, cursor_color)
-        
-        # Save frame
-        frame_path = os.path.join(output_dir, f'frame_{frame_number:06d}.png')
-        surface.write_to_png(frame_path)
+                ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
+                draw_width = base_width
+
+            for i in range(1, len(visible_points)):
+                p1, p2 = visible_points[i-1], visible_points[i]
+                pressure = get_normalized_pressure(p2)
+                ctx.set_line_width(max(0.5, draw_width * pressure))
+                ctx.move_to(p1['x'], p1['y'])
+                ctx.line_to(p2['x'], p2['y'])
+                ctx.stroke()
+                
+            if show_cursor and current_time <= stroke_info['endTime']:
+                cursor_pos = (visible_points[-1]['x'], visible_points[-1]['y'])
+                cursor_is_eraser = is_eraser
+                cursor_color = (s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
+
+        if show_cursor and cursor_pos:
+            if cursor_is_eraser:
+                draw_realistic_eraser(ctx, cursor_pos[0], cursor_pos[1], scale=scale_factor, cursor_scale=cursor_scale)
+            else:
+                draw_realistic_pencil(ctx, cursor_pos[0], cursor_pos[1], cursor_color, scale=scale_factor, cursor_scale=cursor_scale)
+            
+        surface.write_to_png(os.path.join(output_dir, f'frame_{frame_number:06d}.png'))
         frame_number += 1
         
-        # Progress indicator
-        if frame_number % 30 == 0 or frame_number == num_frames:
-            progress = (frame_number / num_frames) * 100
-            print(f"  Progress: {frame_number}/{num_frames} frames ({progress:.1f}%)")
-    
-    print(f"\n✓ Rendering complete! {frame_number} frames saved to {output_dir}/")
-    
-    # Encode to video if requested
-    if encode_to_video:
-        encode_video(output_dir, encode_to_video, frame_rate, video_quality, cleanup_frames)
-    else:
-        # Show manual FFmpeg commands
-        print(f"\nCreate video with FFmpeg:")
-        print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
-        print(f"\nCreate high-quality video:")
-        print(f"  ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -crf 18 -preset slow output.mp4")
-        print(f"\nCreate GIF:")
-        print(f"  ffmpeg -framerate 10 -i {output_dir}/frame_%06d.png -vf \"scale=800:-1:flags=lanczos\" output.gif")
+        if num_frames > 0 and frame_number % 30 == 0:
+            print(f"  Progress: {int(frame_number/num_frames*100)}%", end='\r')
 
+    print(f"\nRendering complete. {frame_number} frames saved.")
+    
+    if encode_to_video:
+        # Pass the generated audio file to the encoder
+        encode_video(output_dir, encode_to_video, frame_rate, generated_audio_file, video_quality, cleanup_frames)
 
 def main():
     import argparse
-    
-    parser = argparse.ArgumentParser(
-        description='Render Xournal++ motion recording data to video frames or video file.',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Render frames only
-  python render_motion_video.py motion_metadata.json output_frames/
-  
-  # Render frames at 60 FPS
-  python render_motion_video.py motion_metadata.json output_frames/ --fps 60
-  
-  # Render and encode to video
-  python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4
-  
-  # Render and encode high-quality video, then cleanup frames
-  python render_motion_video.py motion_metadata.json output_frames/ --video output.mp4 --quality high --cleanup
-  
-  # Render and encode to GIF
-  python render_motion_video.py motion_metadata.json output_frames/ --video output.gif --quality gif
-        """
-    )
-    
-    parser.add_argument('metadata', help='Path to motion_metadata.json file')
-    parser.add_argument('output_dir', help='Directory to save rendered frames')
-    parser.add_argument('--fps', type=int, default=None, 
-                        help='Override frame rate (uses metadata value if not specified)')
-    parser.add_argument('--video', '-v', default=None,
-                        help='Encode frames to video file (requires FFmpeg)')
-    parser.add_argument('--quality', '-q', choices=['high', 'medium', 'low', 'gif'], default='high',
-                        help='Video encoding quality (default: high)')
-    parser.add_argument('--cleanup', '-c', action='store_true',
-                        help='Delete frame images after encoding video')
-    parser.add_argument('--cursor', action='store_true',
-                        help='Show pencil/eraser cursor at current drawing position')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('metadata')
+    parser.add_argument('output_dir')
+    parser.add_argument('--fps', type=int, default=None)
+    parser.add_argument('--video', '-v', default=None)
+    parser.add_argument('--quality', '-q', default='high')
+    parser.add_argument('--cleanup', '-c', action='store_true')
+    parser.add_argument('--cursor', action='store_true')
+    parser.add_argument('--scale', type=float, default=2.0, help='Scale factor for resolution')
+    parser.add_argument('--cursor-scale', type=float, default=1.0, help='Relative size of the cursor')
+    parser.add_argument('--audio-tap', default="tap.wav", help='Path to tap sound file (e.g., tap.wav)')
+    parser.add_argument('--audio-scratch', default="scratch.wav", help='Path to scratch sound file (e.g., scratch.wav)')
     
     args = parser.parse_args()
-    
-    if not os.path.exists(args.metadata):
-        print(f"Error: File not found: {args.metadata}")
-        sys.exit(1)
-    
-    try:
-        render_motion_video(
-            args.metadata, 
-            args.output_dir, 
-            fps=args.fps,
-            encode_to_video=args.video,
-            video_quality=args.quality,
-            cleanup_frames=args.cleanup,
-            show_cursor=args.cursor
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
+    render_motion_video(args.metadata, args.output_dir, args.fps, args.video, args.quality, args.cleanup, args.cursor, args.scale, args.cursor_scale, args.audio_tap, args.audio_scratch)
 
 if __name__ == '__main__':
     main()
