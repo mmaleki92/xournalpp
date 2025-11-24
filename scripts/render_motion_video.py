@@ -31,11 +31,17 @@ def get_normalized_pressure(point):
     """
     Get normalized pressure from a motion point.
     
+    Args:
+        point: Dictionary containing motion point data with optional 'p' field
+    
     Returns:
-        float: Pressure value 0.0-1.0, or 1.0 if not available
-               (Pressure is -1.0 when not available from hardware)
+        float: Pressure value between 0.0 and 1.0
+               - Returns 1.0 if 'p' field is missing (old format, no pressure data)
+               - Returns 1.0 if 'p' is -1.0 (pressure sensor not available)
+               - Returns the actual pressure value if 'p' is in range [0.0, 1.0]
     """
-    pressure = point.get('p', 1.0)
+    pressure = point.get('p', -1.0)
+    # Treat missing or invalid pressure (-1.0) as full pressure (1.0)
     return 1.0 if pressure < 0.0 else pressure
 
 
