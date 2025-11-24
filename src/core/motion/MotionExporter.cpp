@@ -8,9 +8,12 @@
 
 #include "control/settings/Settings.h"  // for Settings
 #include "model/Document.h"             // for Document
+#include "model/LineStyle.h"            // for LineStyle
 #include "model/MotionRecording.h"      // for MotionRecording
+#include "model/PageType.h"             // for PageType, PageTypeFormat
 #include "model/Stroke.h"               // for Stroke
 #include "model/XojPage.h"              // for XojPage
+#include "util/Color.h"                 // for Color
 #include "util/PathUtil.h"              // for toUri
 
 using std::string;
@@ -108,6 +111,33 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         metadataFile << "  \"maxTimestamp\": " << maxTimestamp << ",\n";
         metadataFile << "  \"pages\": [\n";
 
+        // Helper lambda to write page background type as string
+        auto getBackgroundTypeName = [](PageTypeFormat format) -> const char* {
+            switch (format) {
+                case PageTypeFormat::Plain: return "plain";
+                case PageTypeFormat::Ruled: return "ruled";
+                case PageTypeFormat::Lined: return "lined";
+                case PageTypeFormat::Staves: return "staves";
+                case PageTypeFormat::Graph: return "graph";
+                case PageTypeFormat::Dotted: return "dotted";
+                case PageTypeFormat::IsoDotted: return "isodotted";
+                case PageTypeFormat::IsoGraph: return "isograph";
+                case PageTypeFormat::Pdf: return "pdf";
+                case PageTypeFormat::Image: return "image";
+                default: return "plain";
+            }
+        };
+
+        // Helper lambda to write stroke tool type as string
+        auto getToolTypeName = [](StrokeTool tool) -> const char* {
+            switch (tool) {
+                case StrokeTool::PEN: return "pen";
+                case StrokeTool::ERASER: return "eraser";
+                case StrokeTool::HIGHLIGHTER: return "highlighter";
+                default: return "pen";
+            }
+        };
+
         // Export detailed motion data for each page
         for (size_t p = 0; p < this->document->getPageCount(); p++) {
             auto page = this->document->getPage(p);
@@ -117,6 +147,27 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
             metadataFile << "    {\n";
             metadataFile << "      \"pageIndex\": " << p << ",\n";
+            
+            // Add page dimensions
+            metadataFile << "      \"width\": " << page->getWidth() << ",\n";
+            metadataFile << "      \"height\": " << page->getHeight() << ",\n";
+            
+            // Add page background information
+            PageType bgType = page->getBackgroundType();
+            metadataFile << "      \"background\": {\n";
+            metadataFile << "        \"type\": \"" << getBackgroundTypeName(bgType.format) << "\",\n";
+            metadataFile << "        \"config\": \"" << bgType.config << "\",\n";
+            
+            // Add background color
+            Color bgColor = page->getBackgroundColor();
+            metadataFile << "        \"color\": {\n";
+            metadataFile << "          \"r\": " << static_cast<int>(bgColor.red) << ",\n";
+            metadataFile << "          \"g\": " << static_cast<int>(bgColor.green) << ",\n";
+            metadataFile << "          \"b\": " << static_cast<int>(bgColor.blue) << ",\n";
+            metadataFile << "          \"a\": " << static_cast<int>(bgColor.alpha) << "\n";
+            metadataFile << "        }\n";
+            metadataFile << "      },\n";
+            
             metadataFile << "      \"strokes\": [\n";
 
             bool firstStroke = true;
@@ -133,6 +184,43 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
                             auto* motion = stroke->getMotionRecording();
                             metadataFile << "        {\n";
+                            
+                            // Add stroke styling properties
+                            metadataFile << "          \"tool\": \"" << getToolTypeName(stroke->getToolType()) << "\",\n";
+                            metadataFile << "          \"width\": " << stroke->getWidth() << ",\n";
+                            
+                            // Add stroke color
+                            Color strokeColor = stroke->getColor();
+                            metadataFile << "          \"color\": {\n";
+                            metadataFile << "            \"r\": " << static_cast<int>(strokeColor.red) << ",\n";
+                            metadataFile << "            \"g\": " << static_cast<int>(strokeColor.green) << ",\n";
+                            metadataFile << "            \"b\": " << static_cast<int>(strokeColor.blue) << ",\n";
+                            metadataFile << "            \"a\": " << static_cast<int>(strokeColor.alpha) << "\n";
+                            metadataFile << "          },\n";
+                            
+                            // Add fill property
+                            metadataFile << "          \"fill\": " << stroke->getFill() << ",\n";
+                            
+                            // Add line style (dashed or solid)
+                            const LineStyle& lineStyle = stroke->getLineStyle();
+                            metadataFile << "          \"lineStyle\": {\n";
+                            metadataFile << "            \"hasDashes\": " << (lineStyle.hasDashes() ? "true" : "false");
+                            if (lineStyle.hasDashes()) {
+                                metadataFile << ",\n";
+                                metadataFile << "            \"dashes\": [";
+                                const auto& dashes = lineStyle.getDashes();
+                                for (size_t i = 0; i < dashes.size(); i++) {
+                                    metadataFile << dashes[i];
+                                    if (i < dashes.size() - 1) {
+                                        metadataFile << ", ";
+                                    }
+                                }
+                                metadataFile << "]\n";
+                            } else {
+                                metadataFile << "\n";
+                            }
+                            metadataFile << "          },\n";
+                            
                             metadataFile << "          \"motionPoints\": [\n";
 
                             const auto& points = motion->getMotionPoints();
