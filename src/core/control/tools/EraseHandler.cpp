@@ -5,7 +5,7 @@
 #include <vector>   // for vector
 
 #include <gdk/gdk.h>  // for GdkRectangle
-#include <glib.h>     // for gint
+#include <glib.h>     // for gint, g_get_monotonic_time
 
 #include "control/ToolEnums.h"            // for ERASER_TYPE_DELETE_STROKE
 #include "control/ToolHandler.h"          // for ToolHandler
@@ -13,6 +13,8 @@
 #include "model/Document.h"               // for Document
 #include "model/Element.h"                // for Element, ELEMENT_STROKE
 #include "model/Layer.h"                  // for Layer
+#include "model/MotionRecording.h"        // for MotionRecording
+#include "model/Point.h"                  // for Point
 #include "model/Stroke.h"                 // for Stroke
 #include "model/XojPage.h"                // for XojPage
 #include "model/eraser/ErasableStroke.h"  // for ErasableStroke
@@ -20,8 +22,10 @@
 #include "undo/DeleteUndoAction.h"        // for DeleteUndoAction
 #include "undo/EraseUndoAction.h"         // for EraseUndoAction
 #include "undo/UndoRedoHandler.h"         // for UndoRedoHandler
+#include "util/Color.h"                   // for Colors
 #include "util/Range.h"                   // for Range
 #include "util/SmallVector.h"             // for SmallVector
+#include "util/safe_casts.h"              // for as_unsigned
 
 EraseHandler::EraseHandler(UndoRedoHandler* undo, Document* doc, const PageRef& page, ToolHandler* handler,
                            LegacyRedrawable* view):
@@ -32,18 +36,23 @@ EraseHandler::EraseHandler(UndoRedoHandler* undo, Document* doc, const PageRef& 
         undo(undo),
         eraseDeleteUndoAction(nullptr),
         eraseUndoAction(nullptr),
-        halfEraserSize(0) {}
+        halfEraserSize(0),
+        eraserMotionStroke(nullptr),
+        eraserMotionRecording(nullptr) {}
 
 EraseHandler::~EraseHandler() {
     if (this->eraseDeleteUndoAction) {
         this->finalize();
     }
+    // Clean up eraser motion stroke if it wasn't finalized
+    eraserMotionStroke.reset();
+    eraserMotionRecording.reset();
 }
 
 /**
  * Handle eraser event: "Delete Stroke" and "Standard", Whiteout is not handled here
  */
-void EraseHandler::erase(double x, double y) {
+void EraseHandler::erase(double x, double y, size_t timestamp) {
     this->halfEraserSize = this->handler->getThickness();
     GdkRectangle eraserRect = {gint(x - halfEraserSize), gint(y - halfEraserSize), gint(halfEraserSize * 2),
                                gint(halfEraserSize * 2)};
@@ -51,6 +60,27 @@ void EraseHandler::erase(double x, double y) {
     Range range(x, y);
 
     Layer* l = page->getSelectedLayer();
+
+    // Initialize eraser motion recording if this is the first erase call
+    if (!eraserMotionRecording) {
+        eraserMotionRecording = std::make_unique<MotionRecording>();
+        
+        // Create a stroke to hold the eraser motion
+        eraserMotionStroke = std::make_unique<Stroke>();
+        eraserMotionStroke->setToolType(StrokeTool::ERASER);
+        eraserMotionStroke->setWidth(this->handler->getThickness() * 2);  // Full eraser diameter
+        eraserMotionStroke->setColor(Colors::white);  // White color for eraser
+    }
+
+    // Record eraser motion point
+    // Use current timestamp or generate one if not provided
+    size_t currentTimestamp = timestamp;
+    if (currentTimestamp == 0) {
+        currentTimestamp = as_unsigned(g_get_monotonic_time() / 1000);  // Convert to milliseconds
+    }
+    
+    Point eraserPoint(x, y, -1.0);  // No pressure for eraser
+    eraserMotionRecording->addMotionPoint(eraserPoint, currentTimestamp, true);  // isEraser = true
 
     for (Element* e: xoj::refElementContainer(l->getElements())) {
         if (e->getType() == ELEMENT_STROKE && e->intersectsArea(&eraserRect)) {
@@ -142,4 +172,22 @@ void EraseHandler::finalize() {
     } else if (this->eraseDeleteUndoAction) {
         this->eraseDeleteUndoAction = nullptr;
     }
+    
+    // Add eraser motion stroke to the page if we recorded any motion
+    if (eraserMotionRecording && eraserMotionRecording->hasMotionData() && eraserMotionStroke) {
+        // Attach motion recording to the eraser stroke
+        eraserMotionStroke->setMotionRecording(std::move(eraserMotionRecording));
+        
+        // Add the eraser motion stroke to the page
+        Layer* l = page->getSelectedLayer();
+        if (l) {
+            doc->lock();
+            l->addElement(std::move(eraserMotionStroke));
+            doc->unlock();
+        }
+    }
+    
+    // Clean up
+    eraserMotionStroke.reset();
+    eraserMotionRecording.reset();
 }

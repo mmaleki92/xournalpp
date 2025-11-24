@@ -298,7 +298,7 @@ auto XojPageView::onButtonPressEvent(const PositionInputData& pos) -> bool {
             this->inputHandler->onButtonPressEvent(pos, zoom);
         }
     } else if (h->getToolType() == TOOL_ERASER) {
-        this->eraser->erase(x, y);
+        this->eraser->erase(x, y, pos.timestamp);
         this->inEraser = true;
     } else if (h->getToolType() == TOOL_LASER_POINTER_PEN || h->getToolType() == TOOL_LASER_POINTER_HIGHLIGHTER) {
         if (!this->laserPointer) {
@@ -563,7 +563,7 @@ auto XojPageView::onMotionNotifyEvent(const PositionInputData& pos) -> bool {
     } else if (this->laserPointer && this->laserPointer->onMotionNotifyEvent(pos, zoom)) {
         // used this event
     } else if (h->getToolType() == TOOL_ERASER && h->getEraserType() != ERASER_TYPE_WHITEOUT && this->inEraser) {
-        this->eraser->erase(x, y);
+        this->eraser->erase(x, y, pos.timestamp);
     }
 
     return false;
