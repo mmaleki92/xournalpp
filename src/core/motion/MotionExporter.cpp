@@ -230,7 +230,8 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
                             const auto& points = motion->getMotionPoints();
                             // Normalize timestamps to start from 0 for each stroke (removes idle time between strokes)
-                            size_t strokeStartTime = points.empty() ? 0 : points[0].timestamp;
+                            // Use getStartTimestamp() which returns the minimum timestamp, avoiding potential underflow
+                            size_t strokeStartTime = motion->hasMotionData() ? motion->getStartTimestamp() : 0;
                             
                             for (size_t i = 0; i < points.size(); i++) {
                                 const auto& mp = points[i];
