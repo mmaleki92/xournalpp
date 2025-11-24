@@ -86,9 +86,11 @@ def encode_video(frames_dir, output_video, frame_rate, quality='high', cleanup_f
     # Build FFmpeg command based on quality setting
     if quality == 'gif':
         # Create animated GIF
+        # Limit framerate to 20 FPS for reasonable file size (GIFs don't benefit from higher FPS)
+        # Scale to 800px width to reduce file size while maintaining readability
         cmd = [
             'ffmpeg', '-y',
-            '-framerate', str(min(frame_rate, 20)),  # Limit GIF framerate
+            '-framerate', str(min(frame_rate, 20)),
             '-i', os.path.join(frames_dir, 'frame_%06d.png'),
             '-vf', 'scale=800:-1:flags=lanczos',
             output_video
@@ -378,13 +380,13 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     is_eraser_stroke = (stroke_tool == 'eraser') or point_is_eraser
                     
                     # Set color based on tool type
-                    # CRITICAL FIX: For PEN/HIGHLIGHTER, use STROKE color
-                    # For ERASER, use BACKGROUND color
+                    # Eraser strokes use background color to simulate erasing
+                    # Pen/highlighter strokes use their designated stroke color
                     if is_eraser_stroke:
                         # Eraser: draw in background color to simulate erasing
                         ctx.set_source_rgb(bg['r'] / 255.0, bg['g'] / 255.0, bg['b'] / 255.0)
                     else:
-                        # Pen/Highlighter: draw in stroke color (THIS IS THE FIX!)
+                        # Pen/Highlighter: draw in stroke color
                         ctx.set_source_rgb(
                             stroke_color.get('r', 0) / 255.0,
                             stroke_color.get('g', 0) / 255.0,
