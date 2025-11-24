@@ -58,8 +58,32 @@ Each export creates a timestamped subfolder in your configured export directory 
      "pages": [
        {
          "pageIndex": 0,
+         "width": 612.0,
+         "height": 792.0,
+         "background": {
+           "type": "lined",
+           "config": "",
+           "color": {
+             "r": 255,
+             "g": 255,
+             "b": 255,
+             "a": 255
+           }
+         },
          "strokes": [
            {
+             "tool": "pen",
+             "width": 2.0,
+             "color": {
+               "r": 0,
+               "g": 0,
+               "b": 0,
+               "a": 255
+             },
+             "fill": -1,
+             "lineStyle": {
+               "hasDashes": false
+             },
              "motionPoints": [
                {
                  "t": 1000,
@@ -81,7 +105,35 @@ Each export creates a timestamped subfolder in your configured export directory 
 
 ### Motion Data Format
 
-Each motion point in the JSON file contains:
+Each page in the JSON file contains:
+
+- **pageIndex**: Zero-based page number
+- **width**: Page width in points
+- **height**: Page height in points
+- **background**: Page background information
+  - **type**: Background type (plain, ruled, lined, staves, graph, dotted, isodotted, isograph, pdf, image)
+  - **config**: Additional background configuration string
+  - **color**: Background color in RGBA format
+    - **r**: Red component (0-255)
+    - **g**: Green component (0-255)
+    - **b**: Blue component (0-255)
+    - **a**: Alpha component (0-255)
+
+Each stroke contains:
+
+- **tool**: Tool type used (pen, highlighter, eraser)
+- **width**: Stroke width in points
+- **color**: Stroke color in RGBA format
+  - **r**: Red component (0-255)
+  - **g**: Green component (0-255)
+  - **b**: Blue component (0-255)
+  - **a**: Alpha component (0-255)
+- **fill**: Fill opacity (-1 for no fill, 0-255 for fill opacity)
+- **lineStyle**: Line style information
+  - **hasDashes**: Whether the stroke has a dashed pattern
+  - **dashes**: Array of dash lengths (only present if hasDashes is true)
+
+Each motion point in a stroke contains:
 
 - **t** (timestamp): Time in milliseconds since recording started
 - **x**: X-coordinate of the pen/eraser position
@@ -91,9 +143,19 @@ Each motion point in the JSON file contains:
 
 ## Creating Videos from Motion Data
 
+The enhanced motion_metadata.json now includes complete page styling (dimensions, background type and color) and stroke properties (color, width, tool type, line style). This enables you to create accurate video reproductions of the drawing process.
+
+### Video Rendering Strategy
+
+The metadata supports proper multi-page rendering:
+1. **Page transitions**: When a new page starts, clear the canvas and render the new page's background
+2. **Background rendering**: Use the page's background type and color to set up the canvas
+3. **Stroke rendering**: Apply each stroke's color, width, and line style when drawing
+4. **Timeline sequencing**: Use timestamps to create smooth animations
+
 ### Using FFmpeg (for rendered frames)
 
-If you create frame images from the motion data:
+After creating frame images from the motion data with a custom script:
 
 ```bash
 # Basic video
@@ -117,37 +179,217 @@ You can write your own scripts to read the `motion_metadata.json` file and creat
 ```python
 import json
 import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw
 
 # Load motion data
 with open('motion_metadata.json', 'r') as f:
     data = json.load(f)
 
-# Extract motion points from first stroke
-points = data['pages'][0]['strokes'][0]['motionPoints']
-
-# Visualize the path
-x_coords = [p['x'] for p in points]
-y_coords = [p['y'] for p in points]
-plt.plot(x_coords, y_coords)
-plt.savefig('motion_path.png')
+# Process each page
+for page in data['pages']:
+    # Create canvas with page dimensions and background color
+    width = int(page['width'])
+    height = int(page['height'])
+    bg_color = (page['background']['color']['r'],
+                page['background']['color']['g'],
+                page['background']['color']['b'],
+                page['background']['color']['a'])
+    
+    img = Image.new('RGBA', (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Draw each stroke with its motion
+    for stroke in page['strokes']:
+        stroke_color = (stroke['color']['r'],
+                       stroke['color']['g'],
+                       stroke['color']['b'],
+                       stroke['color']['a'])
+        stroke_width = int(stroke['width'])
+        
+        points = stroke['motionPoints']
+        # Animate the drawing motion frame by frame
+        for i in range(len(points)):
+            if i > 0:
+                prev_point = points[i-1]
+                curr_point = points[i]
+                draw.line([(prev_point['x'], prev_point['y']),
+                          (curr_point['x'], curr_point['y'])],
+                         fill=stroke_color, width=stroke_width)
+    
+    img.save(f"page_{page['pageIndex']}.png")
 ```
 
-**JavaScript Example:**
+**JavaScript/Node.js Example with Canvas:**
 ```javascript
 const fs = require('fs');
+const { createCanvas } = require('canvas');
 
 // Load motion data
 const data = JSON.parse(fs.readFileSync('motion_metadata.json', 'utf8'));
 
-// Process motion points
+// Process each page
 data.pages.forEach((page, pageIdx) => {
-  page.strokes.forEach((stroke, strokeIdx) => {
-    stroke.motionPoints.forEach(point => {
-      console.log(`Time: ${point.t}ms, Position: (${point.x}, ${point.y})`);
+  // Create canvas with page dimensions
+  const canvas = createCanvas(page.width, page.height);
+  const ctx = canvas.getContext('2d');
+  
+  // Set background color
+  const bg = page.background.color;
+  ctx.fillStyle = `rgba(${bg.r}, ${bg.g}, ${bg.b}, ${bg.a / 255})`;
+  ctx.fillRect(0, 0, page.width, page.height);
+  
+  // Draw each stroke with its properties
+  page.strokes.forEach((stroke) => {
+    const color = stroke.color;
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+    ctx.lineWidth = stroke.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // Apply dash pattern if present
+    if (stroke.lineStyle.hasDashes) {
+      ctx.setLineDash(stroke.lineStyle.dashes);
+    } else {
+      ctx.setLineDash([]);
+    }
+    
+    // Draw motion path
+    ctx.beginPath();
+    stroke.motionPoints.forEach((point, idx) => {
+      if (idx === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
     });
+    ctx.stroke();
   });
+  
+  // Save frame
+  const buffer = canvas.toBuffer('image/png');
+  fs.writeFileSync(`page_${pageIdx}.png`, buffer);
 });
 ```
+
+### Complete Video Rendering Example (Python)
+
+Here's a complete example that renders video with proper multi-page handling, showing strokes being drawn over time:
+
+```python
+import json
+from PIL import Image, ImageDraw
+import os
+
+def render_motion_video(metadata_path, output_dir, fps=30):
+    """
+    Render motion recording to video frames.
+    Each frame shows the progressive drawing up to that timestamp.
+    When a new page appears, the canvas is cleared and redrawn with the new page's background.
+    """
+    # Load motion data
+    with open(metadata_path, 'r') as f:
+        data = json.load(f)
+    
+    frame_rate = data['frameRate']
+    min_time = data['minTimestamp']
+    max_time = data['maxTimestamp']
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Calculate frame times
+    duration_ms = max_time - min_time
+    num_frames = int((duration_ms * frame_rate) / 1000) + 1
+    frame_interval_ms = 1000 / frame_rate
+    
+    frame_number = 0
+    
+    # Render each frame
+    for frame_idx in range(num_frames):
+        current_time = min_time + (frame_idx * frame_interval_ms)
+        
+        # Find which page we're on based on timestamp
+        current_page = None
+        for page in data['pages']:
+            # Check if any stroke in this page has motion at current_time
+            for stroke in page['strokes']:
+                if stroke['motionPoints']:
+                    first_time = stroke['motionPoints'][0]['t']
+                    last_time = stroke['motionPoints'][-1]['t']
+                    if first_time <= current_time <= last_time:
+                        current_page = page
+                        break
+            if current_page:
+                break
+        
+        # If no page found, use the first page
+        if not current_page:
+            current_page = data['pages'][0]
+        
+        # Create canvas with page background
+        width = int(current_page['width'])
+        height = int(current_page['height'])
+        bg = current_page['background']['color']
+        bg_color = (bg['r'], bg['g'], bg['b'], bg['a'])
+        
+        img = Image.new('RGBA', (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        # Draw all strokes up to current_time
+        for stroke in current_page['strokes']:
+            stroke_color = (stroke['color']['r'],
+                          stroke['color']['g'],
+                          stroke['color']['b'],
+                          stroke['color']['a'])
+            stroke_width = int(stroke['width'])
+            
+            # Collect points up to current_time
+            visible_points = []
+            for point in stroke['motionPoints']:
+                if point['t'] <= current_time:
+                    visible_points.append(point)
+                else:
+                    break
+            
+            # Draw the stroke progressively
+            if len(visible_points) > 1:
+                for i in range(1, len(visible_points)):
+                    prev = visible_points[i-1]
+                    curr = visible_points[i]
+                    
+                    # Handle eraser: draw in background color
+                    if curr['isEraser']:
+                        draw_color = bg_color
+                    else:
+                        draw_color = stroke_color
+                    
+                    draw.line([(prev['x'], prev['y']), 
+                              (curr['x'], curr['y'])],
+                             fill=draw_color, width=stroke_width)
+        
+        # Save frame
+        frame_path = os.path.join(output_dir, f'frame_{frame_number:06d}.png')
+        img.save(frame_path)
+        frame_number += 1
+        
+        if frame_number % 30 == 0:
+            print(f"Rendered {frame_number}/{num_frames} frames...")
+    
+    print(f"Rendering complete! {frame_number} frames saved to {output_dir}")
+    print(f"\nCreate video with:")
+    print(f"ffmpeg -framerate {frame_rate} -i {output_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p output.mp4")
+
+# Usage
+render_motion_video('motion_metadata.json', 'output_frames', fps=30)
+```
+
+This script:
+- Handles multi-page documents by detecting page transitions
+- Renders proper background colors for each page
+- Shows progressive drawing of strokes over time
+- Handles eraser strokes by drawing in background color
+- Applies correct stroke colors and widths
+- Generates frames ready for FFmpeg conversion
 
 ## Troubleshooting
 
