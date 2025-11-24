@@ -137,10 +137,12 @@ Each stroke contains:
   - **g**: Green component (0-255)
   - **b**: Blue component (0-255)
   - **a**: Alpha component (0-255)
-- **fill**: Fill opacity (-1 for no fill, 0-255 for fill opacity)
+- **fill**: Fill opacity as integer
+  - **-1**: No fill (shape is not filled)
+  - **1-255**: Fill opacity (1 = nearly transparent, 255 = fully opaque)
 - **lineStyle**: Line style information
   - **hasDashes**: Whether the stroke has a dashed pattern
-  - **dashes**: Array of dash lengths (only present if hasDashes is true)
+  - **dashes**: Array of dash lengths in points (only present if hasDashes is true)
 
 Each motion point in a stroke contains:
 

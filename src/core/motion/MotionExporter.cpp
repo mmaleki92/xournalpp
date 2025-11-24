@@ -130,7 +130,7 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
         // Helper lambda to write stroke tool type as string
         auto getToolTypeName = [](StrokeTool tool) -> const char* {
-            switch (tool.operator const StrokeTool::Value&()) {
+            switch (tool) {
                 case StrokeTool::PEN: return "pen";
                 case StrokeTool::ERASER: return "eraser";
                 case StrokeTool::HIGHLIGHTER: return "highlighter";
