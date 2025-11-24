@@ -251,8 +251,20 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         data = json.load(f)
     
     frame_rate = fps if fps is not None else data['frameRate']
-    min_time = data['minTimestamp']
-    max_time = data['maxTimestamp']
+    
+    # New format: timestamps are normalized per-stroke, use totalDurationMs
+    # Old format compatibility: fall back to minTimestamp/maxTimestamp if present
+    if 'totalDurationMs' in data:
+        # New format: idle time between strokes is excluded
+        duration_ms = data['totalDurationMs']
+    else:
+        # Old format compatibility
+        min_time = data.get('minTimestamp', 0)
+        max_time = data.get('maxTimestamp', 0)
+        duration_ms = max_time - min_time
+    
+    duration_sec = duration_ms / 1000.0
+    total_motion_points = data['totalMotionPoints']
     
     # Check for pressure data in the motion points
     # Pressure values: -1.0 = no sensor/missing, 0.0-1.0 = valid pressure data
@@ -266,8 +278,8 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     
     print(f"Motion data info:")
     print(f"  Frame rate: {frame_rate} fps")
-    print(f"  Time range: {min_time}ms - {max_time}ms ({(max_time - min_time) / 1000:.2f}s)")
-    print(f"  Total motion points: {data['totalMotionPoints']}")
+    print(f"  Total duration: {duration_ms}ms ({duration_sec:.2f}s, excluding idle time)")
+    print(f"  Total motion points: {total_motion_points}")
     print(f"  Pages: {len(data['pages'])}")
     print(f"  Pressure data: {'Yes' if has_pressure else 'No (using fixed width)'}")
     
@@ -276,13 +288,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     
     # Calculate frame times based on FPS as sampling rate
     # FPS represents how many frames to generate per second of recording time
-    # NOT duration × FPS, but a fixed sampling rate through the motion data
-    duration_ms = max_time - min_time
-    duration_sec = duration_ms / 1000.0
-    total_motion_points = data['totalMotionPoints']
-    
-    # Simple FPS calculation: sample the motion data at FPS intervals
-    # This makes frame count proportional to duration at given sampling rate
     if duration_sec > 0:
         # Number of frames = duration in seconds × frames per second
         # This gives us a consistent sampling rate regardless of motion point density
@@ -295,40 +300,35 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     print(f"Rendering {num_frames} frames ({duration_sec:.2f}s at {frame_rate} fps, {total_motion_points} motion points)...")
     
     frame_number = 0
-    current_page_idx = 0
     
-    # Pre-process: create a timeline of which page is active at each timestamp
-    page_timeline = []
+    # Pre-process: build a cumulative timeline for all strokes across all pages
+    # Since timestamps are now normalized per-stroke (starting from 0), we need to
+    # calculate absolute times by accumulating stroke durations
+    stroke_timeline = []
+    cumulative_time = 0
+    
     for page in data['pages']:
-        if page['strokes']:
-            # Find min and max timestamps for this page
-            page_min = float('inf')
-            page_max = float('-inf')
-            for stroke in page['strokes']:
-                if stroke['motionPoints']:
-                    page_min = min(page_min, stroke['motionPoints'][0]['t'])
-                    page_max = max(page_max, stroke['motionPoints'][-1]['t'])
-            
-            if page_min != float('inf'):
-                page_timeline.append({
-                    'pageIndex': page['pageIndex'],
-                    'minTime': page_min,
-                    'maxTime': page_max,
-                    'page': page
+        for stroke in page.get('strokes', []):
+            if stroke.get('motionPoints'):
+                stroke_duration = stroke['motionPoints'][-1]['t'] - stroke['motionPoints'][0]['t']
+                stroke_timeline.append({
+                    'page': page,
+                    'stroke': stroke,
+                    'startTime': cumulative_time,
+                    'endTime': cumulative_time + stroke_duration,
+                    'normalizedPoints': stroke['motionPoints']  # Points with timestamps starting from 0
                 })
-    
-    # Sort by start time
-    page_timeline.sort(key=lambda p: p['minTime'])
+                cumulative_time += stroke_duration
     
     # Render each frame
     for frame_idx in range(num_frames):
-        current_time = min_time + (frame_idx * frame_interval_ms)
+        current_time = frame_idx * frame_interval_ms
         
-        # Find which page we're on
+        # Find which page we're on based on the current time
         current_page = data['pages'][0]  # Default to first page
-        for page_info in page_timeline:
-            if page_info['minTime'] <= current_time <= page_info['maxTime']:
-                current_page = page_info['page']
+        for stroke_info in stroke_timeline:
+            if stroke_info['startTime'] <= current_time <= stroke_info['endTime']:
+                current_page = stroke_info['page']
                 break
         
         # Create canvas with page background using Cairo for high-quality rendering
@@ -354,17 +354,31 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         cursor_is_eraser = False
         cursor_color = (0, 0, 0)  # Default black
         
-        # Draw all strokes up to current_time on this page
-        for stroke in current_page['strokes']:
+        # Draw all strokes up to current_time using the cumulative timeline
+        for stroke_info in stroke_timeline:
+            # Only draw strokes on the current page
+            if stroke_info['page']['pageIndex'] != current_page['pageIndex']:
+                continue
+            
+            stroke = stroke_info['stroke']
+            stroke_start_time = stroke_info['startTime']
+            stroke_end_time = stroke_info['endTime']
+            
+            # Skip strokes that haven't started yet
+            if current_time < stroke_start_time:
+                continue
+            
             # Get stroke properties
             stroke_color = stroke.get('color', {})
             base_width = stroke.get('width', 2.0)
             stroke_tool = stroke.get('tool', 'pen')
             
-            # Collect points up to current_time
+            # Collect points up to current_time within this stroke
+            # Convert current_time to stroke-relative time
+            stroke_relative_time = current_time - stroke_start_time
             visible_points = []
-            for point in stroke['motionPoints']:
-                if point['t'] <= current_time:
+            for point in stroke_info['normalizedPoints']:
+                if point['t'] <= stroke_relative_time:
                     visible_points.append(point)
                 else:
                     break
@@ -404,7 +418,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     ctx.stroke()
                     
                     # Update cursor position to the most recent point
-                    if show_cursor:
+                    if show_cursor and current_time >= stroke_start_time and current_time <= stroke_end_time:
                         cursor_x = curr['x']
                         cursor_y = curr['y']
                         cursor_is_eraser = is_eraser_stroke

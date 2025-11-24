@@ -56,9 +56,9 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
     g_message("Starting motion export to: %s (frame rate: %d fps)", outputPath.string().c_str(), frameRate);
 
     // Count total motion points across all pages to estimate total frames
+    // Calculate total duration as sum of individual stroke durations (excluding idle time between strokes)
     size_t totalMotionPoints = 0;
-    size_t minTimestamp = SIZE_MAX;
-    size_t maxTimestamp = 0;
+    size_t totalDurationMs = 0;  // Sum of all stroke durations without idle time
 
     for (size_t p = 0; p < this->document->getPageCount(); p++) {
         auto page = this->document->getPage(p);
@@ -75,8 +75,9 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                         auto* motion = stroke->getMotionRecording();
                         totalMotionPoints += motion->getMotionPointCount();
                         if (motion->hasMotionData()) {
-                            minTimestamp = std::min(minTimestamp, motion->getStartTimestamp());
-                            maxTimestamp = std::max(maxTimestamp, motion->getEndTimestamp());
+                            // Add the duration of this stroke only (not idle time between strokes)
+                            size_t strokeDuration = motion->getEndTimestamp() - motion->getStartTimestamp();
+                            totalDurationMs += strokeDuration;
                         }
                     }
                 }
@@ -90,10 +91,9 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         return false;
     }
 
-    // Calculate total frames based on time range and frame rate
-    if (maxTimestamp > minTimestamp) {
-        size_t durationMs = maxTimestamp - minTimestamp;
-        this->totalFrames = (durationMs * frameRate) / 1000 + 1;
+    // Calculate total frames based on total drawing time (excluding idle time between strokes)
+    if (totalDurationMs > 0) {
+        this->totalFrames = (totalDurationMs * frameRate) / 1000 + 1;
     } else {
         this->totalFrames = 1;
     }
@@ -113,8 +113,7 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         metadataFile << "  \"frameRate\": " << frameRate << ",\n";
         metadataFile << "  \"totalFrames\": " << this->totalFrames << ",\n";
         metadataFile << "  \"totalMotionPoints\": " << totalMotionPoints << ",\n";
-        metadataFile << "  \"minTimestamp\": " << minTimestamp << ",\n";
-        metadataFile << "  \"maxTimestamp\": " << maxTimestamp << ",\n";
+        metadataFile << "  \"totalDurationMs\": " << totalDurationMs << ",\n";
         metadataFile << "  \"pages\": [\n";
 
         // Helper lambda to write page background type as string
@@ -230,10 +229,14 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                             metadataFile << "          \"motionPoints\": [\n";
 
                             const auto& points = motion->getMotionPoints();
+                            // Normalize timestamps to start from 0 for each stroke (removes idle time between strokes)
+                            size_t strokeStartTime = points.empty() ? 0 : points[0].timestamp;
+                            
                             for (size_t i = 0; i < points.size(); i++) {
                                 const auto& mp = points[i];
                                 metadataFile << "            {";
-                                metadataFile << "\"t\": " << mp.timestamp << ", ";
+                                // Store timestamp relative to stroke start (removes idle time)
+                                metadataFile << "\"t\": " << (mp.timestamp - strokeStartTime) << ", ";
                                 metadataFile << "\"x\": " << mp.point.x << ", ";
                                 metadataFile << "\"y\": " << mp.point.y << ", ";
                                 metadataFile << "\"p\": " << mp.point.z << ", ";
@@ -276,7 +279,11 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         readmeFile << "This directory contains exported motion recording data from Xournal++.\n\n";
         readmeFile << "Frame Rate: " << frameRate << " fps\n";
         readmeFile << "Total Frames: " << this->totalFrames << "\n";
-        readmeFile << "Total Motion Points: " << totalMotionPoints << "\n\n";
+        readmeFile << "Total Motion Points: " << totalMotionPoints << "\n";
+        readmeFile << "Total Duration: " << totalDurationMs << " ms (excluding idle time between strokes)\n\n";
+        readmeFile << "Note: Timestamps in motion_metadata.json are normalized per-stroke (starting from 0),\n";
+        readmeFile << "      which excludes idle time between strokes. This makes video rendering\n";
+        readmeFile << "      more efficient and focused on actual drawing activity.\n\n";
         readmeFile << "Files:\n";
         readmeFile << "  - motion_metadata.json: Detailed motion data in JSON format\n";
         readmeFile << "  - README.txt: This file\n\n";
