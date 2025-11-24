@@ -174,7 +174,7 @@ void EraseHandler::finalize() {
     }
     
     // Add eraser motion stroke to the page if we recorded any motion
-    if (eraserMotionRecording && eraserMotionRecording->hasMotionData() && eraserMotionStroke) {
+    if (eraserMotionRecording && eraserMotionStroke) {
         // Attach motion recording to the eraser stroke
         eraserMotionStroke->setMotionRecording(std::move(eraserMotionRecording));
         
@@ -184,6 +184,9 @@ void EraseHandler::finalize() {
             doc->lock();
             l->addElement(std::move(eraserMotionStroke));
             doc->unlock();
+        } else {
+            // Warn if we can't add the eraser motion stroke
+            g_warning("Cannot add eraser motion stroke: no selected layer");
         }
     }
     
