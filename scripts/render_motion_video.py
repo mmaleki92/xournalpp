@@ -3,6 +3,7 @@
 Render Xournal++ motion recording to High-Res video/GIF with Realistic Cursors.
 Supports normalized per-stroke timing (skips idle time automatically).
 Supports audio generation (requires pydub).
+Supports custom background patterns (dotted, graph, ruled).
 """
 
 import json
@@ -26,6 +27,73 @@ def get_normalized_pressure(point):
     # Treat missing field or negative pressure as full pressure
     return 1.0 if pressure < 0.0 else pressure
 
+def is_background_dark(rgb_dict):
+    """Check if background color is dark to adjust contrast."""
+    r = rgb_dict.get('r', 255)
+    g = rgb_dict.get('g', 255)
+    b = rgb_dict.get('b', 255)
+    # Calculate luminance (standard formula)
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+    return lum < 0.5
+
+def draw_background(ctx, width, height, bg_info):
+    """Draws the page background (color + pattern)."""
+    # 1. Fill Base Color
+    color = bg_info.get('color', {'r': 255, 'g': 255, 'b': 255})
+    r, g, b = color.get('r', 255)/255.0, color.get('g', 255)/255.0, color.get('b', 255)/255.0
+    ctx.set_source_rgb(r, g, b)
+    ctx.paint()
+
+    bg_type = bg_info.get('type', 'plain')
+    
+    # 2. Determine Pattern Color (Contrast)
+    # If bg is dark, use light grey (0.8). If bg is light, use dark grey (0.6)
+    is_dark = is_background_dark(color)
+    if is_dark:
+        ctx.set_source_rgba(0.8, 0.8, 0.9, 0.4) # Light whitish-blue, semi-transparent
+    else:
+        ctx.set_source_rgba(0.4, 0.4, 0.5, 0.4) # Dark grey-blue, semi-transparent
+
+    # 3. Draw Pattern
+    # Xournal++ standard spacing is often around 20-30 points.
+    spacing = 24 
+    
+    if bg_type == 'dotted':
+        for y in range(0, height, spacing):
+            for x in range(0, width, spacing):
+                ctx.arc(x, y, 1.0, 0, 2*math.pi) # Dot radius 1.0
+                ctx.fill()
+                
+    elif bg_type == 'graph':
+        ctx.set_line_width(0.5)
+        # Vertical lines
+        for x in range(0, width, spacing):
+            ctx.move_to(x, 0)
+            ctx.line_to(x, height)
+        # Horizontal lines
+        for y in range(0, height, spacing):
+            ctx.move_to(0, y)
+            ctx.line_to(width, y)
+        ctx.stroke()
+        
+    elif bg_type == 'ruled':
+        ctx.set_line_width(0.5)
+        # Horizontal lines only
+        for y in range(spacing, height, spacing):
+            ctx.move_to(0, y)
+            ctx.line_to(width, y)
+        ctx.stroke()
+        
+        # Vertical margin line (standard notebook style)
+        margin_x = 72 # approx 1 inch
+        if is_dark:
+             ctx.set_source_rgba(0.9, 0.5, 0.5, 0.5) # Light pinkish on dark
+        else:
+             ctx.set_source_rgba(1.0, 0.3, 0.3, 0.5) # Red on light
+        ctx.move_to(margin_x, 0)
+        ctx.line_to(margin_x, height)
+        ctx.stroke()
+
 def encode_video(frames_dir, output_video, frame_rate, audio_file=None, quality='high', cleanup_frames=False):
     """Encode rendered frames into a video file using FFmpeg."""
     if not shutil.which('ffmpeg'):
@@ -34,21 +102,17 @@ def encode_video(frames_dir, output_video, frame_rate, audio_file=None, quality=
     
     print(f"\nEncoding video to {output_video}...")
 
-    # Pad Filter: Ensures width/height are divisible by 2 (Fixes crashes)
     pad_filter = 'pad=ceil(iw/2)*2:ceil(ih/2)*2'
     
     input_args = ['-framerate', str(frame_rate), '-i', os.path.join(frames_dir, 'frame_%06d.png')]
     
-    # Add audio input if provided
     if audio_file and os.path.exists(audio_file):
         input_args.extend(['-i', audio_file])
-        # Map video from stream 0, audio from stream 1
         map_args = ['-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest']
     else:
         map_args = []
 
     if quality == 'gif':
-        # GIF: Palette generation for perfect colors
         filter_graph = (
             f"[0:v] fps={min(frame_rate, 20)}, "
             f"{pad_filter}, "
@@ -56,7 +120,6 @@ def encode_video(frames_dir, output_video, frame_rate, audio_file=None, quality=
         )
         cmd = ['ffmpeg', '-y'] + input_args + ['-filter_complex', filter_graph, output_video]
     else:
-        # VIDEO (MP4)
         crf = '17' if quality == 'high' else '23'
         preset = 'veryslow' if quality == 'high' else 'fast'
         
@@ -86,13 +149,9 @@ def encode_video(frames_dir, output_video, frame_rate, audio_file=None, quality=
         return False
 
 def generate_audio_track(stroke_timeline, total_duration_ms, tap_file, scratch_file, output_path):
-    """
-    Generates a WAV audio track synchronized with the strokes.
-    Modulates scratch volume based on stroke velocity and pressure.
-    """
+    """Generates a WAV audio track synchronized with the strokes."""
     if not PYDUB_AVAILABLE:
         print("Warning: 'pydub' library not found. Skipping audio generation.")
-        print("To enable audio, run: pip install pydub")
         return None
 
     if not tap_file or not scratch_file:
@@ -107,7 +166,6 @@ def generate_audio_track(stroke_timeline, total_duration_ms, tap_file, scratch_f
         print(f"Error loading audio files: {e}")
         return None
 
-    # Create silent base track (add 1s buffer at end)
     base_track = AudioSegment.silent(duration=total_duration_ms + 1000)
     
     count_tap = 0
@@ -120,28 +178,20 @@ def generate_audio_track(stroke_timeline, total_duration_ms, tap_file, scratch_f
         
         if duration <= 0: continue
         
-        # Heuristic: Very short strokes are taps
         if duration < 300:
-            # TAP
             base_track = base_track.overlay(tap_sound, position=start_ms)
             count_tap += 1
         else:
-            # DYNAMIC SCRATCH
-            # We construct the sound chunk-by-chunk based on movement speed
             count_scratch += 1
-            
-            # 1. Prepare raw audio loop for this stroke
             needed_audio = scratch_sound
             while len(needed_audio) < duration:
                 needed_audio += scratch_sound
             raw_stroke_audio = needed_audio[:duration]
             
-            # 2. Process in 50ms chunks to modulate volume
             chunk_ms = 10
             points = info['normalizedPoints']
             processed_chunks = []
             
-            # State for tracking points iteration
             p_idx = 0
             num_points = len(points)
             if num_points > 0:
@@ -149,104 +199,70 @@ def generate_audio_track(stroke_timeline, total_duration_ms, tap_file, scratch_f
             else:
                 last_x, last_y = 0, 0
 
-            # Iterate through time slices
             for t_start in range(0, duration, chunk_ms):
                 t_end = min(t_start + chunk_ms, duration)
                 curr_chunk_dur = t_end - t_start
                 if curr_chunk_dur <= 0: break
                 
-                # Extract raw audio slice
                 chunk_audio = raw_stroke_audio[t_start:t_end]
                 
-                # Calculate metrics for this time window
                 dist = 0.0
                 pressure_sum = 0.0
                 pressure_count = 0
                 
-                # Advance p_idx to t_start
                 while p_idx < num_points and points[p_idx]['t'] < t_start:
                     last_x = points[p_idx]['x']
                     last_y = points[p_idx]['y']
                     p_idx += 1
                 
-                # Process points within this chunk window
                 curr_p_idx = p_idx
                 while curr_p_idx < num_points and points[curr_p_idx]['t'] < t_end:
                     p = points[curr_p_idx]
-                    
-                    # Distance
                     d = math.hypot(p['x'] - last_x, p['y'] - last_y)
                     dist += d
                     last_x = p['x']
                     last_y = p['y']
-                    
-                    # Pressure
                     pr = get_normalized_pressure(p)
                     pressure_sum += pr
                     pressure_count += 1
-                    
                     curr_p_idx += 1
                 
-                # Speed (pixels per ms)
                 speed = dist / curr_chunk_dur
-                
-                # Avg Pressure
                 avg_pressure = (pressure_sum / pressure_count) if pressure_count > 0 else 0.5
                 
-                # --- Volume Calculation ---
-                target_gain_db = -100.0 # Silence default
-                
-                # Threshold: if moving slower than 0.02 px/ms, consider it a pause
+                target_gain_db = -100.0
                 if speed > 0.02: 
-                    # Speed factor: 0.0 to 1.0 (capped at 0.5 px/ms)
                     speed_factor = min(speed / 0.5, 1.0)
-                    
-                    # Pressure factor: 0.2 to 1.0
                     pressure_factor = 0.2 + (avg_pressure * 0.8)
-                    
                     combined = speed_factor * pressure_factor
-                    
-                    # Log mapping: 1.0 -> 0dB, 0.1 -> -20dB
                     if combined > 0.001:
                         target_gain_db = 20 * math.log10(combined)
                 
-                # Apply gain to chunk
                 chunk_audio = chunk_audio + target_gain_db
                 processed_chunks.append(chunk_audio)
                 
-            # Concatenate all chunks
             if processed_chunks:
-                # 'sum' with start value required for AudioSegment lists in newer pydub versions usually,
-                # but simple sum works if list not empty.
                 full_stroke_audio = sum(processed_chunks)
-                
-                # Smooth fades at ends of the stroke
                 fade_len = min(50, duration // 4)
                 full_stroke_audio = full_stroke_audio.fade_in(fade_len).fade_out(fade_len)
-                
                 base_track = base_track.overlay(full_stroke_audio, position=start_ms)
             
     print(f"  Audio generated: {count_tap} taps, {count_scratch} strokes.")
-    
-    # Export temp file
     base_track.export(output_path, format="wav")
     return output_path
 
-def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
+def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0, is_dark_bg=False):
     """
     Draws a realistic, faceted (hexagonal) pencil with WOOD TEXTURE.
-    Tip is at (x,y). Body points to lower-right.
+    Adjusts shadow intensity based on background brightness.
     """
     ctx.save()
     ctx.translate(x, y)
     
-    # Base configuration
     main_angle_deg = 135
-    
     s = scale * cursor_scale * 2.5
     ctx.scale(s, s)
     
-    # --- GEOMETRY DEFINITIONS ---
     width = 14
     half_w = width / 2
     length = 200 
@@ -257,9 +273,19 @@ def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
     ctx.save()
     ctx.rotate(math.radians(main_angle_deg - 3))
     shadow_len = length * 0.25
+    
     grad_shadow = cairo.LinearGradient(0, 0, 0, -shadow_len)
-    grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.6)
-    grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
+    
+    # Shadow Color Adjustment for Visibility
+    if is_dark_bg:
+        # On dark background, shadow must be dense black to be seen against dark blue
+        grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.95) # Nearly opaque black start
+        grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
+    else:
+        # Normal shadow for white/light paper
+        grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.6)
+        grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
+        
     ctx.set_source(grad_shadow)
     ctx.move_to(0, 0)
     ctx.line_to(half_w * 0.35, -lead_h) 
@@ -293,26 +319,20 @@ def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
     ctx.line_to(-half_w, -cone_h)
     ctx.close_path()
     
-    # Base Wood Gradient
     pat_wood = cairo.LinearGradient(0, -lead_h, 0, -cone_h)
     pat_wood.add_color_stop_rgb(0.0, 0.85, 0.70, 0.55) 
     pat_wood.add_color_stop_rgb(0.3, 0.95, 0.85, 0.70) 
     pat_wood.add_color_stop_rgb(1.0, 0.90, 0.80, 0.65) 
     ctx.set_source(pat_wood)
-    ctx.fill_preserve() # Keep path for clipping if needed, but we draw over it
+    ctx.fill_preserve() 
     
-    # -- WOOD GRAIN TEXTURE --
-    # Draw curved lines over the wood cone to simulate grain
-    ctx.clip() # Clip drawing to the cone shape
-    ctx.set_source_rgba(0.65, 0.5, 0.35, 0.6) # Darker brownish wood color, semi-transparent
+    ctx.clip() 
+    ctx.set_source_rgba(0.65, 0.5, 0.35, 0.6) 
     ctx.set_line_width(0.4)
     
-    # Draw a few deterministic curves
     for i in range(4):
-        # Calculate start/control points based on index to spread them out
         offset_x = (i - 1.5) * 3 
         ctx.move_to(offset_x, -lead_h)
-        # Curve goes from top of wood (-lead_h) to bottom (-cone_h) with a slight bend
         ctx.curve_to(offset_x + 1, -lead_h - 10, offset_x - 2, -cone_h + 10, offset_x * 0.5, -cone_h)
         ctx.stroke()
         
@@ -339,7 +359,6 @@ def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
     ctx.set_source_rgb(0.1, 0.3, 0.8) 
     ctx.fill()
     
-    # Specular highlight
     ctx.save()
     ctx.rectangle(-half_w + face_w + 1, -length, 2, length - cone_h)
     ctx.set_source_rgba(1, 1, 1, 0.2)
@@ -368,7 +387,7 @@ def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0):
     
     ctx.restore()
 
-def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
+def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0, is_dark_bg=False):
     """Draws a realistic rectangular block eraser with shadow."""
     ctx.save()
     ctx.translate(x, y)
@@ -383,7 +402,11 @@ def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
 
     def draw_eraser_shape(is_shadow=False):
         if is_shadow:
-            ctx.set_source_rgba(0, 0, 0, 0.2)
+            if is_dark_bg:
+                 ctx.set_source_rgba(0, 0, 0, 0.8) # Dense shadow for dark bg
+            else:
+                 ctx.set_source_rgba(0, 0, 0, 0.2) # Light shadow for light bg
+            
             ctx.move_to(0, h)
             ctx.line_to(w, h)
             ctx.line_to(w + depth, h - 5)
@@ -394,14 +417,12 @@ def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
             ctx.fill()
             return
 
-        # Front
         ctx.rectangle(0, 0, w, h)
         pat = cairo.LinearGradient(0, 0, w, h)
         pat.add_color_stop_rgb(0, 0.95, 0.95, 0.95)
         pat.add_color_stop_rgb(1, 0.85, 0.85, 0.85)
         ctx.set_source(pat)
         ctx.fill()
-        # Side
         ctx.move_to(w, 0)
         ctx.line_to(w + depth, -5)
         ctx.line_to(w + depth, h - 5)
@@ -409,7 +430,6 @@ def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
         ctx.close_path()
         ctx.set_source_rgb(0.8, 0.8, 0.8)
         ctx.fill()
-        # Top
         ctx.move_to(0, 0)
         ctx.line_to(depth, -5)
         ctx.line_to(w + depth, -5)
@@ -417,7 +437,6 @@ def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
         ctx.close_path()
         ctx.set_source_rgb(0.9, 0.9, 0.9)
         ctx.fill()
-        # Sleeve
         sleeve_h = h * 0.5
         sleeve_y = h * 0.3
         ctx.rectangle(0, sleeve_y, w, sleeve_h)
@@ -444,7 +463,6 @@ def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0):
     ctx.restore()
 
 def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=None, video_quality='high', cleanup_frames=False, show_cursor=False, scale_factor=2.0, cursor_scale=1.0, audio_tap=None, audio_scratch=None):
-    """Render frames with scaling factor and realistic cursors."""
     
     print(f"Loading data from {metadata_path}...")
     with open(metadata_path, 'r') as f: data = json.load(f)
@@ -484,12 +502,10 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     print(f"Rendering {num_frames} frames at {scale_factor}x resolution ({frame_rate} fps)...")
     print(f"Total Video Duration: {duration_sec:.2f}s (Idle time skipped)")
 
-    # --- AUDIO GENERATION ---
     generated_audio_file = None
     if audio_tap and audio_scratch:
         audio_out_path = os.path.join(output_dir, "generated_audio.wav")
         generated_audio_file = generate_audio_track(stroke_timeline, duration_ms, audio_tap, audio_scratch, audio_out_path)
-    # ------------------------
 
     frame_number = 0
     
@@ -509,9 +525,9 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         ctx = cairo.Context(surface)
         ctx.scale(scale_factor, scale_factor)
         
-        bg = current_page['background']['color']
-        ctx.set_source_rgb(bg['r']/255, bg['g']/255, bg['b']/255)
-        ctx.paint()
+        # Draw Background with Dotted Pattern
+        draw_background(ctx, base_w, base_h, current_page.get('background', {}))
+
         ctx.set_line_cap(cairo.LINE_CAP_ROUND)
         ctx.set_line_join(cairo.LINE_JOIN_ROUND)
         ctx.set_antialias(cairo.ANTIALIAS_BEST)
@@ -520,6 +536,9 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         cursor_is_eraser = False
         cursor_color = (0,0,0)
         
+        # Check if background is dark for cursor adjustments
+        is_bg_dark = is_background_dark(current_page.get('background', {}).get('color', {}))
+
         for stroke_info in stroke_timeline:
             if stroke_info['page']['pageIndex'] != current_page['pageIndex']:
                 continue
@@ -544,7 +563,11 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             is_eraser = stroke.get('tool') == 'eraser' or visible_points[-1].get('isEraser', False)
             
             if is_eraser:
-                ctx.set_source_rgb(bg['r']/255, bg['g']/255, bg['b']/255)
+                # Eraser color = background color? 
+                # Actually, eraser should be same as background color. 
+                # Since draw_background uses the color, we get it here.
+                bg_c = current_page.get('background', {}).get('color', {'r':255,'g':255,'b':255})
+                ctx.set_source_rgb(bg_c.get('r',255)/255, bg_c.get('g',255)/255, bg_c.get('b',255)/255)
                 draw_width = base_width * 4 if stroke.get('tool') != 'eraser' else base_width
             else:
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
@@ -565,9 +588,9 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
 
         if show_cursor and cursor_pos:
             if cursor_is_eraser:
-                draw_realistic_eraser(ctx, cursor_pos[0], cursor_pos[1], scale=scale_factor, cursor_scale=cursor_scale)
+                draw_realistic_eraser(ctx, cursor_pos[0], cursor_pos[1], scale=scale_factor, cursor_scale=cursor_scale, is_dark_bg=is_bg_dark)
             else:
-                draw_realistic_pencil(ctx, cursor_pos[0], cursor_pos[1], cursor_color, scale=scale_factor, cursor_scale=cursor_scale)
+                draw_realistic_pencil(ctx, cursor_pos[0], cursor_pos[1], cursor_color, scale=scale_factor, cursor_scale=cursor_scale, is_dark_bg=is_bg_dark)
             
         surface.write_to_png(os.path.join(output_dir, f'frame_{frame_number:06d}.png'))
         frame_number += 1
@@ -578,7 +601,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     print(f"\nRendering complete. {frame_number} frames saved.")
     
     if encode_to_video:
-        # Pass the generated audio file to the encoder
         encode_video(output_dir, encode_to_video, frame_rate, generated_audio_file, video_quality, cleanup_frames)
 
 def main():
@@ -592,7 +614,7 @@ def main():
     parser.add_argument('--cleanup', '-c', action='store_true')
     parser.add_argument('--cursor', action='store_true')
     parser.add_argument('--scale', type=float, default=2.0, help='Scale factor for resolution')
-    parser.add_argument('--cursor-scale', type=float, default=1.0, help='Relative size of the cursor')
+    parser.add_argument('--cursor-scale', type=float, default=0.4, help='Relative size of the cursor')
     parser.add_argument('--audio-tap', default="tap.wav", help='Path to tap sound file (e.g., tap.wav)')
     parser.add_argument('--audio-scratch', default="scratch.wav", help='Path to scratch sound file (e.g., scratch.wav)')
     
