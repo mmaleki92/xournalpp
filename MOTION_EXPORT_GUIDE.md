@@ -62,8 +62,7 @@ Each export creates a timestamped subfolder in your configured export directory 
      "frameRate": 30,
      "totalFrames": 150,
      "totalMotionPoints": 500,
-     "minTimestamp": 1000,
-     "maxTimestamp": 6000,
+     "totalDurationMs": 5000,
      "pages": [
        {
          "pageIndex": 0,
@@ -95,7 +94,7 @@ Each export creates a timestamped subfolder in your configured export directory 
              },
              "motionPoints": [
                {
-                 "t": 1000,
+                 "t": 0,
                  "x": 100.5,
                  "y": 200.3,
                  "p": 0.8,
@@ -109,6 +108,8 @@ Each export creates a timestamped subfolder in your configured export directory 
      ]
    }
    ```
+   
+   **Note**: Timestamps in `motionPoints` are normalized per-stroke (starting from 0 for each stroke), which excludes idle time between strokes. The `totalDurationMs` field represents the sum of all stroke durations without idle time.
 
 2. **README.txt** - Instructions and examples for video rendering
 
@@ -146,11 +147,13 @@ Each stroke contains:
 
 Each motion point in a stroke contains:
 
-- **t** (timestamp): Time in milliseconds since recording started
+- **t** (timestamp): Time in milliseconds relative to the stroke's start (always starts from 0 for each stroke)
 - **x**: X-coordinate of the pen/eraser position
 - **y**: Y-coordinate of the pen/eraser position
 - **p** (pressure): Stylus pressure (0.0 to 1.0), or -1.0 if not available
 - **isEraser**: Boolean flag (true for eraser, false for pen)
+
+**Important**: Timestamps are normalized per-stroke, meaning each stroke's timestamps start from 0. This removes idle time between strokes, making the exported data more compact and video rendering more efficient. To render a complete timeline, accumulate stroke durations sequentially.
 
 ## Creating Videos from Motion Data
 
