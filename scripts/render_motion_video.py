@@ -41,7 +41,8 @@ def get_normalized_pressure(point):
                - Returns the actual pressure value if 'p' is in range [0.0, 1.0]
     """
     pressure = point.get('p', -1.0)
-    # Treat missing or invalid pressure (-1.0) as full pressure (1.0)
+    # Treat missing field (default -1.0) or any negative pressure value as full pressure (1.0)
+    # This handles: no pressure sensor (p=-1.0), old format (no 'p' field), or invalid values
     return 1.0 if pressure < 0.0 else pressure
 
 
@@ -64,7 +65,8 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     max_time = data['maxTimestamp']
     
     # Check for pressure data in the motion points
-    # Pressure is -1.0 when not available, 0.0-1.0 when available
+    # Pressure values: -1.0 = no sensor/missing, 0.0-1.0 = valid pressure data
+    # If any point has valid pressure (>= 0.0), we consider the data to have pressure info
     has_pressure = any(
         point.get('p', -1.0) >= 0.0
         for page in data['pages']
