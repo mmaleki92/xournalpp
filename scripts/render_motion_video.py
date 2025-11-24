@@ -5,6 +5,12 @@ Render Xournal++ motion recording data to video frames.
 This script reads the motion_metadata.json file exported from Xournal++
 and renders it frame-by-frame, creating images that can be converted to video.
 
+Features:
+    - Pressure-sensitive rendering: stroke width varies based on stylus pressure
+    - Multi-page support: handles documents with multiple pages
+    - Progressive drawing: shows strokes being drawn over time
+    - Eraser support: renders eraser strokes correctly
+
 Requirements:
     pip install pillow
 
@@ -19,6 +25,25 @@ import json
 import os
 import sys
 from PIL import Image, ImageDraw
+
+
+def get_normalized_pressure(point):
+    """
+    Get normalized pressure from a motion point.
+    
+    Args:
+        point: Dictionary containing motion point data with optional 'p' field
+    
+    Returns:
+        float: Pressure value between 0.0 and 1.0
+               - Returns 1.0 if 'p' field is missing (old format, no pressure data)
+               - Returns 1.0 if 'p' is -1.0 (pressure sensor not available)
+               - Returns the actual pressure value if 'p' is in range [0.0, 1.0]
+    """
+    pressure = point.get('p', -1.0)
+    # Treat missing field (default -1.0) or any negative pressure value as full pressure (1.0)
+    # This handles: no pressure sensor (p=-1.0), old format (no 'p' field), or invalid values
+    return 1.0 if pressure < 0.0 else pressure
 
 
 def render_motion_video(metadata_path, output_dir, fps=None):
@@ -39,11 +64,22 @@ def render_motion_video(metadata_path, output_dir, fps=None):
     min_time = data['minTimestamp']
     max_time = data['maxTimestamp']
     
+    # Check for pressure data in the motion points
+    # Pressure values: -1.0 = no sensor/missing, 0.0-1.0 = valid pressure data
+    # If any point has valid pressure (>= 0.0), we consider the data to have pressure info
+    has_pressure = any(
+        point.get('p', -1.0) >= 0.0
+        for page in data['pages']
+        for stroke in page.get('strokes', [])
+        for point in stroke.get('motionPoints', [])
+    )
+    
     print(f"Motion data info:")
     print(f"  Frame rate: {frame_rate} fps")
     print(f"  Time range: {min_time}ms - {max_time}ms ({(max_time - min_time) / 1000:.2f}s)")
     print(f"  Total motion points: {data['totalMotionPoints']}")
     print(f"  Pages: {len(data['pages'])}")
+    print(f"  Pressure data: {'Yes' if has_pressure else 'No (using fixed width)'}")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -96,18 +132,19 @@ def render_motion_video(metadata_path, output_dir, fps=None):
         width = int(current_page['width'])
         height = int(current_page['height'])
         bg = current_page['background']['color']
-        bg_color = (bg['r'], bg['g'], bg['b'], bg['a'])
+        # Use RGB mode for opaque output (convert RGBA to RGB)
+        bg_color_rgb = (bg['r'], bg['g'], bg['b'])
         
-        img = Image.new('RGBA', (width, height), bg_color)
+        img = Image.new('RGB', (width, height), bg_color_rgb)
         draw = ImageDraw.Draw(img)
         
         # Draw all strokes up to current_time on this page
         for stroke in current_page['strokes']:
-            stroke_color = (stroke['color']['r'],
-                          stroke['color']['g'],
-                          stroke['color']['b'],
-                          stroke['color']['a'])
-            stroke_width = int(max(1, stroke['width']))  # Ensure at least 1px width
+            # Use RGB color (without alpha channel)
+            stroke_color_rgb = (stroke['color']['r'],
+                               stroke['color']['g'],
+                               stroke['color']['b'])
+            base_width = stroke['width']  # Base width from stroke
             
             # Collect points up to current_time
             visible_points = []
@@ -125,11 +162,17 @@ def render_motion_video(metadata_path, output_dir, fps=None):
                     
                     # Handle eraser: draw in background color to "erase"
                     if curr['isEraser'] or stroke['tool'] == 'eraser':
-                        draw_color = bg_color
+                        draw_color = bg_color_rgb
                     else:
-                        draw_color = stroke_color
+                        draw_color = stroke_color_rgb
                     
-                    # Draw line segment with rounded caps
+                    # Calculate width based on pressure if available
+                    pressure = get_normalized_pressure(curr)
+                    
+                    # Apply pressure to base width (ensure minimum 1px)
+                    stroke_width = int(max(1, base_width * pressure))
+                    
+                    # Draw line segment with pressure-sensitive width
                     draw.line([(prev['x'], prev['y']), 
                               (curr['x'], curr['y'])],
                              fill=draw_color, width=stroke_width)

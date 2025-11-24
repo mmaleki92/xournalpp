@@ -39,6 +39,7 @@ pip install pillow
 ### Features
 
 The script correctly handles:
+- **Pressure-sensitive rendering**: Stroke width varies based on stylus pressure at each point
 - **Multi-page documents**: Automatically switches between pages based on timestamps
 - **Page backgrounds**: Renders proper background colors and dimensions for each page
 - **Stroke styling**: Applies correct colors, widths, and tool types (pen/highlighter/eraser)
