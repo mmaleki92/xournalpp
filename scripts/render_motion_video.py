@@ -529,24 +529,23 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     if eraser_events:
         # Normalize eraser timestamps relative to the stroke timeline
         # Find the minimum eraser timestamp as reference
-        if eraser_events:
-            eraser_start_time = min(e['t'] for e in eraser_events)
-            eraser_duration = max(e['t'] for e in eraser_events) - eraser_start_time if len(eraser_events) > 1 else 0
-            
-            # Add eraser events after all strokes in the timeline
-            for event in eraser_events:
-                eraser_timeline.append({
-                    'type': 'eraser',
-                    't': cumulative_time + (event['t'] - eraser_start_time),  # Normalize time
-                    'original_t': event['t'],
-                    'x': event['x'],
-                    'y': event['y'],
-                    'size': event['size'],
-                    'pageIndex': event.get('pageIndex', 0),
-                    'affectedStrokes': event.get('affectedStrokes', [])
-                })
-            
-            cumulative_time += eraser_duration
+        eraser_start_time = min(e['t'] for e in eraser_events)
+        eraser_duration = max(e['t'] for e in eraser_events) - eraser_start_time if len(eraser_events) > 1 else 0
+        
+        # Add eraser events after all strokes in the timeline
+        for event in eraser_events:
+            eraser_timeline.append({
+                'type': 'eraser',
+                't': cumulative_time + (event['t'] - eraser_start_time),  # Normalize time
+                'original_t': event['t'],
+                'x': event['x'],
+                'y': event['y'],
+                'size': event['size'],
+                'pageIndex': event.get('pageIndex', 0),
+                'affectedStrokes': event.get('affectedStrokes', [])
+            })
+        
+        cumulative_time += eraser_duration
 
     duration_ms = cumulative_time
     duration_sec = duration_ms / 1000.0
@@ -652,14 +651,24 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 p1, p2 = visible_points[i-1], visible_points[i]
                 
                 # Check if this segment is in any erased area
+                # Use a more thorough check: test both endpoints and midpoint
                 segment_erased = False
                 if stroke_idx in erased_areas:
                     for erased in erased_areas[stroke_idx]:
-                        # Check if segment midpoint is within erased circle
+                        eraser_radius = erased['size'] / 2
+                        eraser_x, eraser_y = erased['x'], erased['y']
+                        
+                        # Check p1 (start of segment)
+                        dist_p1 = math.hypot(p1['x'] - eraser_x, p1['y'] - eraser_y)
+                        # Check p2 (end of segment)  
+                        dist_p2 = math.hypot(p2['x'] - eraser_x, p2['y'] - eraser_y)
+                        # Check midpoint
                         mid_x = (p1['x'] + p2['x']) / 2
                         mid_y = (p1['y'] + p2['y']) / 2
-                        dist = math.hypot(mid_x - erased['x'], mid_y - erased['y'])
-                        if dist < erased['size'] / 2:
+                        dist_mid = math.hypot(mid_x - eraser_x, mid_y - eraser_y)
+                        
+                        # Segment is erased if any of the points is within eraser radius
+                        if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
                             segment_erased = True
                             break
                 
