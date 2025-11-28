@@ -86,20 +86,32 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         }
     }
 
-    if (totalMotionPoints == 0) {
+    // Also check eraser motion recording data
+    const auto& eraserRecording = this->document->getEraserMotionRecording();
+    size_t eraserMotionPoints = eraserRecording.getMotionPointCount();
+    size_t eraserDurationMs = 0;
+    if (eraserRecording.hasMotionData()) {
+        eraserDurationMs = eraserRecording.getEndTimestamp() - eraserRecording.getStartTimestamp();
+    }
+
+    // Check if there's any motion data (stroke or eraser)
+    if (totalMotionPoints == 0 && eraserMotionPoints == 0) {
         g_warning("No motion recording data found in document");
         this->exporting = false;
         return false;
     }
 
     // Calculate total frames based on total drawing time (excluding idle time between strokes)
-    if (totalDurationMs > 0) {
-        this->totalFrames = (totalDurationMs * frameRate) / 1000 + 1;
+    // Include both stroke and eraser duration
+    size_t combinedDurationMs = totalDurationMs + eraserDurationMs;
+    if (combinedDurationMs > 0) {
+        this->totalFrames = (combinedDurationMs * frameRate) / 1000 + 1;
     } else {
         this->totalFrames = 1;
     }
 
-    g_message("Found %zu motion points, estimated %zu frames to export", totalMotionPoints, this->totalFrames);
+    g_message("Found %zu stroke motion points and %zu eraser motion points, estimated %zu frames to export",
+              totalMotionPoints, eraserMotionPoints, this->totalFrames);
 
     // Export motion data as metadata file
     fs::path metadataPath = outputPath / "motion_metadata.json";
@@ -267,8 +279,7 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
 
         metadataFile << "  ],\n";
         
-        // Export eraser motion events
-        const auto& eraserRecording = this->document->getEraserMotionRecording();
+        // Export eraser motion events (using eraserRecording from earlier scope)
         metadataFile << "  \"eraserEvents\": [\n";
         
         const auto& eraserPoints = eraserRecording.getMotionPoints();
