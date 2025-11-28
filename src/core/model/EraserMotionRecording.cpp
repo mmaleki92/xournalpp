@@ -12,8 +12,8 @@
 
 #include "EraserMotionRecording.h"
 
-void EraserMotionRecording::addMotionPoint(const Point& point, size_t timestamp, double eraserSize) {
-    motionPoints.emplace_back(point, timestamp, eraserSize);
+void EraserMotionRecording::addMotionPoint(const Point& point, size_t timestamp, double eraserSize, size_t pageIndex) {
+    motionPoints.emplace_back(point, timestamp, eraserSize, pageIndex);
 }
 
 void EraserMotionRecording::addAffectedStrokeToLast(size_t strokeIndex) {

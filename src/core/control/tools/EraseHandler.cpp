@@ -61,7 +61,8 @@ void EraseHandler::erase(double x, double y, size_t timestamp) {
     if (recordingEnabled) {
         Point eraserPoint(x, y, -1.0);  // No pressure for eraser
         this->doc->lock();
-        this->doc->getEraserMotionRecording().addMotionPoint(eraserPoint, timestamp, halfEraserSize * 2);
+        size_t pageIndex = this->doc->indexOf(page);
+        this->doc->getEraserMotionRecording().addMotionPoint(eraserPoint, timestamp, halfEraserSize * 2, pageIndex);
         this->doc->unlock();
     }
 

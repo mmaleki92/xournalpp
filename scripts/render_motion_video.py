@@ -387,9 +387,38 @@ def draw_realistic_pencil(ctx, x, y, tip_color, scale=1.0, cursor_scale=1.0, is_
     
     ctx.restore()
 
-def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0, is_dark_bg=False):
+def draw_eraser_area(ctx, x, y, size, is_dark_bg=False):
+    """Draw a subtle circle showing the eraser's active area."""
+    ctx.save()
+    # Draw the eraser area as a translucent circle
+    if is_dark_bg:
+        ctx.set_source_rgba(1, 1, 1, 0.2)  # Light on dark background
+    else:
+        ctx.set_source_rgba(0, 0, 0, 0.1)  # Dark on light background
+    
+    ctx.arc(x, y, size / 2, 0, 2 * math.pi)
+    ctx.fill()
+    
+    # Draw a dashed outline
+    ctx.set_line_width(0.5)
+    if is_dark_bg:
+        ctx.set_source_rgba(1, 1, 1, 0.4)
+    else:
+        ctx.set_source_rgba(0, 0, 0, 0.3)
+    ctx.set_dash([3, 3])
+    ctx.arc(x, y, size / 2, 0, 2 * math.pi)
+    ctx.stroke()
+    ctx.set_dash([])
+    ctx.restore()
+
+def draw_realistic_eraser(ctx, x, y, scale=1.0, cursor_scale=1.0, is_dark_bg=False, eraser_size=None):
     """Draws a realistic rectangular block eraser with shadow."""
     ctx.save()
+    
+    # If eraser_size is provided, show the eraser area
+    if eraser_size:
+        draw_eraser_area(ctx, x, y, eraser_size, is_dark_bg)
+    
     ctx.translate(x, y)
     ctx.rotate(math.radians(-15))
     s = scale * cursor_scale * 2.0
@@ -513,6 +542,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     'x': event['x'],
                     'y': event['y'],
                     'size': event['size'],
+                    'pageIndex': event.get('pageIndex', 0),
                     'affectedStrokes': event.get('affectedStrokes', [])
                 })
             
@@ -657,7 +687,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
 
         if show_cursor and cursor_pos:
             if cursor_is_eraser:
-                draw_realistic_eraser(ctx, cursor_pos[0], cursor_pos[1], scale=scale_factor, cursor_scale=cursor_scale, is_dark_bg=is_bg_dark)
+                draw_realistic_eraser(ctx, cursor_pos[0], cursor_pos[1], scale=scale_factor, cursor_scale=cursor_scale, is_dark_bg=is_bg_dark, eraser_size=eraser_size)
             else:
                 draw_realistic_pencil(ctx, cursor_pos[0], cursor_pos[1], cursor_color, scale=scale_factor, cursor_scale=cursor_scale, is_dark_bg=is_bg_dark)
             

@@ -25,13 +25,14 @@ struct EraserMotionPoint {
     Point point;           // Position of eraser (x, y, pressure if available)
     size_t timestamp;      // Timestamp in milliseconds
     double eraserSize;     // Size of eraser at this point
+    size_t pageIndex;      // Page where erasing occurred
     
     // Information about which strokes were affected at this point
     std::vector<size_t> affectedStrokeIndices;  // Indices of strokes affected
     
     EraserMotionPoint() = default;
-    EraserMotionPoint(const Point& p, size_t ts, double size): 
-        point(p), timestamp(ts), eraserSize(size) {}
+    EraserMotionPoint(const Point& p, size_t ts, double size, size_t page = 0): 
+        point(p), timestamp(ts), eraserSize(size), pageIndex(page) {}
     
     void addAffectedStroke(size_t strokeIndex) {
         affectedStrokeIndices.push_back(strokeIndex);
@@ -60,8 +61,9 @@ public:
      * @param point The position data
      * @param timestamp Timestamp in milliseconds
      * @param eraserSize Size of the eraser
+     * @param pageIndex Index of the page where erasing occurred
      */
-    void addMotionPoint(const Point& point, size_t timestamp, double eraserSize);
+    void addMotionPoint(const Point& point, size_t timestamp, double eraserSize, size_t pageIndex = 0);
 
     /**
      * @brief Add information about an affected stroke to the last motion point

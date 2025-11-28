@@ -279,6 +279,7 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
             metadataFile << "      \"x\": " << ep.point.x << ",\n";
             metadataFile << "      \"y\": " << ep.point.y << ",\n";
             metadataFile << "      \"size\": " << ep.eraserSize << ",\n";
+            metadataFile << "      \"pageIndex\": " << ep.pageIndex << ",\n";
             metadataFile << "      \"affectedStrokes\": [";
             for (size_t j = 0; j < ep.affectedStrokeIndices.size(); j++) {
                 metadataFile << ep.affectedStrokeIndices[j];
