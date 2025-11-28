@@ -566,10 +566,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
 
     frame_number = 0
     
-    # Track erased areas per stroke for progressive erasing visualization
-    # Key: stroke index, Value: list of erased circles (x, y, size)
-    erased_areas = {}
-    
     for frame_idx in range(num_frames):
         current_time = frame_idx * frame_interval_ms
         
@@ -602,17 +598,16 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         is_bg_dark = is_background_dark(current_page.get('background', {}).get('color', {}))
         bg_color = current_page.get('background', {}).get('color', {'r':255,'g':255,'b':255})
         
-        # Update erased areas based on eraser events up to current time
+        # Collect all eraser events up to current time
+        # These will be used for geometric intersection with all strokes
+        active_eraser_events = []
         for eraser_event in eraser_timeline:
             if eraser_event['t'] <= current_time:
-                for stroke_idx in eraser_event['affectedStrokes']:
-                    if stroke_idx not in erased_areas:
-                        erased_areas[stroke_idx] = []
-                    erased_areas[stroke_idx].append({
-                        'x': eraser_event['x'],
-                        'y': eraser_event['y'],
-                        'size': eraser_event['size']
-                    })
+                active_eraser_events.append({
+                    'x': eraser_event['x'],
+                    'y': eraser_event['y'],
+                    'size': eraser_event['size']
+                })
 
         # Draw strokes (with erased portions clipped out)
         for stroke_info in stroke_timeline:
@@ -622,7 +617,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 continue
 
             stroke = stroke_info['stroke']
-            stroke_idx = stroke_info['strokeIndex']
             stroke_rel_time = current_time - stroke_info['startTime']
             points = stroke_info['normalizedPoints']
             visible_points = []
@@ -646,31 +640,29 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
                 draw_width = base_width
 
-            # Draw each segment, checking if it's in an erased area
+            # Draw each segment, checking if it's in any erased area
             for i in range(1, len(visible_points)):
                 p1, p2 = visible_points[i-1], visible_points[i]
                 
-                # Check if this segment is in any erased area
-                # Use a more thorough check: test both endpoints and midpoint
+                # Check if this segment intersects with any eraser event (geometric check)
                 segment_erased = False
-                if stroke_idx in erased_areas:
-                    for erased in erased_areas[stroke_idx]:
-                        eraser_radius = erased['size'] / 2
-                        eraser_x, eraser_y = erased['x'], erased['y']
-                        
-                        # Check p1 (start of segment)
-                        dist_p1 = math.hypot(p1['x'] - eraser_x, p1['y'] - eraser_y)
-                        # Check p2 (end of segment)  
-                        dist_p2 = math.hypot(p2['x'] - eraser_x, p2['y'] - eraser_y)
-                        # Check midpoint
-                        mid_x = (p1['x'] + p2['x']) / 2
-                        mid_y = (p1['y'] + p2['y']) / 2
-                        dist_mid = math.hypot(mid_x - eraser_x, mid_y - eraser_y)
-                        
-                        # Segment is erased if any of the points is within eraser radius
-                        if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
-                            segment_erased = True
-                            break
+                for erased in active_eraser_events:
+                    eraser_radius = erased['size'] / 2
+                    eraser_x, eraser_y = erased['x'], erased['y']
+                    
+                    # Check p1 (start of segment)
+                    dist_p1 = math.hypot(p1['x'] - eraser_x, p1['y'] - eraser_y)
+                    # Check p2 (end of segment)  
+                    dist_p2 = math.hypot(p2['x'] - eraser_x, p2['y'] - eraser_y)
+                    # Check midpoint
+                    mid_x = (p1['x'] + p2['x']) / 2
+                    mid_y = (p1['y'] + p2['y']) / 2
+                    dist_mid = math.hypot(mid_x - eraser_x, mid_y - eraser_y)
+                    
+                    # Segment is erased if any of the points is within eraser radius
+                    if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
+                        segment_erased = True
+                        break
                 
                 if not segment_erased:
                     pressure = get_normalized_pressure(p2)
