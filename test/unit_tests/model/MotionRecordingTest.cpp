@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include "model/MotionRecording.h"
+#include "model/PathParameter.h"
 #include "model/Point.h"
 #include "model/Stroke.h"
 
@@ -191,4 +192,99 @@ TEST(MotionRecording, testSerialization) {
     // Note: Full serialization testing requires ObjectOutputStream/ObjectInputStream
     // which are tested in the util/ObjectIOStreamTest.cpp file.
     // This test primarily verifies the API usage compiles correctly.
+}
+
+TEST(MotionRecording, testStrokeSectionClonePreservesMotion) {
+    // Create a stroke with motion recording
+    Stroke stroke;
+    stroke.addPoint(Point(0.0, 0.0, 0.5));
+    stroke.addPoint(Point(10.0, 10.0, 0.5));
+    stroke.addPoint(Point(20.0, 20.0, 0.5));
+    stroke.addPoint(Point(30.0, 30.0, 0.5));
+    
+    // Add motion recording to the stroke
+    auto motion = std::make_unique<MotionRecording>();
+    motion->addMotionPoint(Point(0.0, 0.0, 0.5), 0, false);
+    motion->addMotionPoint(Point(5.0, 5.0, 0.5), 100, false);
+    motion->addMotionPoint(Point(10.0, 10.0, 0.5), 200, false);
+    motion->addMotionPoint(Point(15.0, 15.0, 0.5), 300, false);
+    motion->addMotionPoint(Point(20.0, 20.0, 0.5), 400, false);
+    motion->addMotionPoint(Point(25.0, 25.0, 0.5), 500, false);
+    motion->addMotionPoint(Point(30.0, 30.0, 0.5), 600, false);
+    
+    stroke.setMotionRecording(std::move(motion));
+    EXPECT_TRUE(stroke.hasMotionRecording());
+    
+    // Clone a section of the stroke (simulating what happens during erasing)
+    PathParameter lowerBound(0, 0.5);  // Middle of first segment
+    PathParameter upperBound(1, 0.5);  // Middle of second segment
+    
+    auto clonedSection = stroke.cloneSection(lowerBound, upperBound);
+    
+    // Verify the cloned section has motion recording preserved
+    EXPECT_TRUE(clonedSection->hasMotionRecording());
+    EXPECT_NE(clonedSection->getMotionRecording(), nullptr);
+    
+    // Verify the motion data is complete (not truncated)
+    const auto* clonedMotion = clonedSection->getMotionRecording();
+    EXPECT_EQ(clonedMotion->getMotionPointCount(), 7);  // All motion points preserved
+    EXPECT_EQ(clonedMotion->getStartTimestamp(), 0);
+    EXPECT_EQ(clonedMotion->getEndTimestamp(), 600);
+}
+
+TEST(MotionRecording, testStrokeSectionCloneWithoutMotion) {
+    // Create a stroke WITHOUT motion recording
+    Stroke stroke;
+    stroke.addPoint(Point(0.0, 0.0, 0.5));
+    stroke.addPoint(Point(10.0, 10.0, 0.5));
+    stroke.addPoint(Point(20.0, 20.0, 0.5));
+    
+    EXPECT_FALSE(stroke.hasMotionRecording());
+    
+    // Clone a section of the stroke
+    PathParameter lowerBound(0, 0.0);
+    PathParameter upperBound(0, 1.0);
+    
+    auto clonedSection = stroke.cloneSection(lowerBound, upperBound);
+    
+    // Verify the cloned section has no motion recording (as expected)
+    EXPECT_FALSE(clonedSection->hasMotionRecording());
+    EXPECT_EQ(clonedSection->getMotionRecording(), nullptr);
+}
+
+TEST(MotionRecording, testMultipleSectionCloneIndependence) {
+    // Create a stroke with motion recording
+    Stroke stroke;
+    stroke.addPoint(Point(0.0, 0.0, 0.5));
+    stroke.addPoint(Point(10.0, 10.0, 0.5));
+    stroke.addPoint(Point(20.0, 20.0, 0.5));
+    stroke.addPoint(Point(30.0, 30.0, 0.5));
+    
+    auto motion = std::make_unique<MotionRecording>();
+    motion->addMotionPoint(Point(0.0, 0.0, 0.5), 0, false);
+    motion->addMotionPoint(Point(15.0, 15.0, 0.5), 300, false);
+    motion->addMotionPoint(Point(30.0, 30.0, 0.5), 600, false);
+    
+    stroke.setMotionRecording(std::move(motion));
+    
+    // Clone two different sections (simulating stroke split by eraser)
+    PathParameter lb1(0, 0.0);
+    PathParameter ub1(0, 0.5);
+    PathParameter lb2(1, 0.5);
+    PathParameter ub2(2, 1.0);
+    
+    auto section1 = stroke.cloneSection(lb1, ub1);
+    auto section2 = stroke.cloneSection(lb2, ub2);
+    
+    // Both sections should have independent copies of motion recording
+    EXPECT_TRUE(section1->hasMotionRecording());
+    EXPECT_TRUE(section2->hasMotionRecording());
+    
+    // Verify they are independent copies (different pointers)
+    EXPECT_NE(section1->getMotionRecording(), section2->getMotionRecording());
+    EXPECT_NE(section1->getMotionRecording(), stroke.getMotionRecording());
+    
+    // Both should have the same motion data
+    EXPECT_EQ(section1->getMotionRecording()->getMotionPointCount(), 3);
+    EXPECT_EQ(section2->getMotionRecording()->getMotionPointCount(), 3);
 }
