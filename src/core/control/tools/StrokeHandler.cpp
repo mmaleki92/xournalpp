@@ -71,17 +71,11 @@ auto StrokeHandler::onMotionNotifyEvent(const PositionInputData& pos, double zoo
         // Convert screen coordinates to document coordinates (divide by zoom)
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
         // FIXED: Use pos.timestamp instead of pos.time
-        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke());
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, false);
     }
 
     stabilizer->processEvent(pos);
     return true;
-}
-
-bool StrokeHandler::isEraserStroke() const {
-    // This method is only called when stroke->hasMotionRecording() is true,
-    // so stroke is guaranteed to be non-null. The null check is defensive programming.
-    return stroke && stroke->getToolType() == StrokeTool::ERASER;
 }
 
 void StrokeHandler::paintTo(Point point) {
@@ -183,7 +177,7 @@ void StrokeHandler::onButtonReleaseEvent(const PositionInputData& pos, double zo
     if (stroke->hasMotionRecording()) {
         Point p(pos.x / zoom, pos.y / zoom, pos.pressure);
         // FIXED: Use pos.timestamp instead of pos.time
-        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, isEraserStroke());
+        stroke->getMotionRecording()->addMotionPoint(p, pos.timestamp, false);
     }
 
     finalizeStroke(pos.pressure);
@@ -298,7 +292,7 @@ void StrokeHandler::onButtonPressEvent(const PositionInputData& pos, double zoom
         // Store the initial point in document coordinates with the event timestamp
         Point p(this->buttonDownPoint.x, this->buttonDownPoint.y, pos.pressure);
         // FIXED: Use pos.timestamp instead of pos.time
-        recording->addMotionPoint(p, pos.timestamp, isEraserStroke());
+        recording->addMotionPoint(p, pos.timestamp, false);
         stroke->setMotionRecording(std::move(recording));
     }
 

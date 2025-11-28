@@ -521,8 +521,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         base_w, base_h = int(current_page['width']), int(current_page['height'])
         scaled_w, scaled_h = int(base_w * scale_factor), int(base_h * scale_factor)
         
-        # Create main surface with ARGB32 format to support transparency for compositing
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, scaled_w, scaled_h)
+        surface = cairo.ImageSurface(cairo.FORMAT_RGB24, scaled_w, scaled_h)
         ctx = cairo.Context(surface)
         ctx.scale(scale_factor, scale_factor)
         
@@ -561,22 +560,15 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             
             s_color = stroke.get('color', {'r':0,'g':0,'b':0})
             base_width = stroke.get('width', 1.5)
-            # Check if this is an eraser stroke - first check tool type, then motion point flags
-            # Short-circuit evaluation avoids unnecessary iteration if tool is already 'eraser'
-            is_eraser = (stroke.get('tool') == 'eraser') or any(p.get('isEraser', False) for p in visible_points)
+            is_eraser = stroke.get('tool') == 'eraser' or visible_points[-1].get('isEraser', False)
             
             if is_eraser:
-                # For eraser strokes, use DEST_OUT operator to actually erase content
-                # IMPORTANT: This REMOVES pixels where the eraser path is drawn
-                # - Content disappears progressively as eraser moves (realistic erasing)
-                # - Background becomes visible in erased areas
-                # - NO colored overlay or highlighting - just pure removal
-                # - Viewers see the evolution of erasing frame-by-frame
-                ctx.save()
-                ctx.set_operator(cairo.OPERATOR_DEST_OUT)
-                # Draw the eraser path with full opacity to completely erase underlying content
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 1.0)
-                draw_width = base_width
+                # Eraser color = background color? 
+                # Actually, eraser should be same as background color. 
+                # Since draw_background uses the color, we get it here.
+                bg_c = current_page.get('background', {}).get('color', {'r':255,'g':255,'b':255})
+                ctx.set_source_rgb(bg_c.get('r',255)/255, bg_c.get('g',255)/255, bg_c.get('b',255)/255)
+                draw_width = base_width * 4 if stroke.get('tool') != 'eraser' else base_width
             else:
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
                 draw_width = base_width
@@ -588,9 +580,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 ctx.move_to(p1['x'], p1['y'])
                 ctx.line_to(p2['x'], p2['y'])
                 ctx.stroke()
-            
-            if is_eraser:
-                ctx.restore()  # Restore normal compositing operator
                 
             if show_cursor and current_time <= stroke_info['endTime']:
                 cursor_pos = (visible_points[-1]['x'], visible_points[-1]['y'])
