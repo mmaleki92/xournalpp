@@ -68,6 +68,7 @@ python scripts/render_motion_video.py --help
 - **Stroke styling**: Correct colors, widths, and tool types (pen/highlighter/eraser)
 - **Progressive drawing**: Shows strokes being drawn over time frame-by-frame
 - **Eraser handling**: Eraser strokes rendered in background color to simulate erasing
+- **Eraser motion tracking**: Visualizes eraser movement and shows progressive stroke erasure
 
 **New Features:**
 - **Direct video encoding**: Built-in FFmpeg integration (no manual commands needed)

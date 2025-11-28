@@ -28,6 +28,31 @@ Motion recording data is stored as an optional attribute in the .xopp XML format
 </stroke>
 ```
 
+### Eraser Motion Recording
+
+In addition to stroke motion data, eraser movements are also recorded separately to capture the evolution of erasing. This allows video rendering to show:
+
+- The eraser cursor position and movement over time
+- Which strokes are being erased at each moment  
+- Progressive stroke erasure visualization
+
+The eraser events are stored in the exported `motion_metadata.json` file in the `eraserEvents` array:
+
+```json
+{
+  "eraserEvents": [
+    {
+      "t": 1000,
+      "x": 150.0,
+      "y": 200.0,
+      "size": 20.0,
+      "pageIndex": 0,
+      "affectedStrokes": [0, 2]
+    }
+  ]
+}
+```
+
 ### Motion Data Format
 
 The `motion` attribute contains space-separated tuples:

@@ -7,15 +7,16 @@
 
 #include <glib.h>  // for g_message, g_warning
 
-#include "control/settings/Settings.h"  // for Settings
-#include "model/Document.h"             // for Document
-#include "model/LineStyle.h"            // for LineStyle
-#include "model/MotionRecording.h"      // for MotionRecording
-#include "model/PageType.h"             // for PageType, PageTypeFormat
-#include "model/Stroke.h"               // for Stroke
-#include "model/XojPage.h"              // for XojPage
-#include "util/Color.h"                 // for Color
-#include "util/PathUtil.h"              // for toUri
+#include "control/settings/Settings.h"    // for Settings
+#include "model/Document.h"               // for Document
+#include "model/EraserMotionRecording.h"  // for EraserMotionRecording
+#include "model/LineStyle.h"              // for LineStyle
+#include "model/MotionRecording.h"        // for MotionRecording
+#include "model/PageType.h"               // for PageType, PageTypeFormat
+#include "model/Stroke.h"                 // for Stroke
+#include "model/XojPage.h"                // for XojPage
+#include "util/Color.h"                   // for Color
+#include "util/PathUtil.h"                // for toUri
 
 using std::string;
 using std::vector;
@@ -264,6 +265,36 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
             metadataFile << "\n";
         }
 
+        metadataFile << "  ],\n";
+        
+        // Export eraser motion events
+        const auto& eraserRecording = this->document->getEraserMotionRecording();
+        metadataFile << "  \"eraserEvents\": [\n";
+        
+        const auto& eraserPoints = eraserRecording.getMotionPoints();
+        for (size_t i = 0; i < eraserPoints.size(); i++) {
+            const auto& ep = eraserPoints[i];
+            metadataFile << "    {\n";
+            metadataFile << "      \"t\": " << ep.timestamp << ",\n";
+            metadataFile << "      \"x\": " << ep.point.x << ",\n";
+            metadataFile << "      \"y\": " << ep.point.y << ",\n";
+            metadataFile << "      \"size\": " << ep.eraserSize << ",\n";
+            metadataFile << "      \"pageIndex\": " << ep.pageIndex << ",\n";
+            metadataFile << "      \"affectedStrokes\": [";
+            for (size_t j = 0; j < ep.affectedStrokeIndices.size(); j++) {
+                metadataFile << ep.affectedStrokeIndices[j];
+                if (j < ep.affectedStrokeIndices.size() - 1) {
+                    metadataFile << ", ";
+                }
+            }
+            metadataFile << "]\n";
+            metadataFile << "    }";
+            if (i < eraserPoints.size() - 1) {
+                metadataFile << ",";
+            }
+            metadataFile << "\n";
+        }
+        
         metadataFile << "  ]\n";
         metadataFile << "}\n";
         metadataFile.close();
