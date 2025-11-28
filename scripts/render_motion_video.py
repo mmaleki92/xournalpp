@@ -470,10 +470,12 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     frame_rate = fps if fps is not None else data['frameRate']
     
     stroke_timeline = []
+    eraser_timeline = []
     cumulative_time = 0
     
+    # Build stroke timeline
     for page in data['pages']:
-        for stroke in page.get('strokes', []):
+        for stroke_idx, stroke in enumerate(page.get('strokes', [])):
             motion_points = stroke.get('motionPoints', [])
             if len(motion_points) >= 2:
                 try:
@@ -481,8 +483,10 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     max_t = max(p['t'] for p in motion_points)
                     stroke_duration = max_t - min_t
                     stroke_timeline.append({
+                        'type': 'stroke',
                         'page': page,
                         'stroke': stroke,
+                        'strokeIndex': stroke_idx,
                         'startTime': cumulative_time,
                         'endTime': cumulative_time + stroke_duration,
                         'normalizedPoints': motion_points 
@@ -490,6 +494,29 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     cumulative_time += stroke_duration
                 except (KeyError, ValueError):
                     continue
+    
+    # Build eraser timeline from eraser events
+    eraser_events = data.get('eraserEvents', [])
+    if eraser_events:
+        # Normalize eraser timestamps relative to the stroke timeline
+        # Find the minimum eraser timestamp as reference
+        if eraser_events:
+            eraser_start_time = min(e['t'] for e in eraser_events)
+            eraser_duration = max(e['t'] for e in eraser_events) - eraser_start_time if len(eraser_events) > 1 else 0
+            
+            # Add eraser events after all strokes in the timeline
+            for event in eraser_events:
+                eraser_timeline.append({
+                    'type': 'eraser',
+                    't': cumulative_time + (event['t'] - eraser_start_time),  # Normalize time
+                    'original_t': event['t'],
+                    'x': event['x'],
+                    'y': event['y'],
+                    'size': event['size'],
+                    'affectedStrokes': event.get('affectedStrokes', [])
+                })
+            
+            cumulative_time += eraser_duration
 
     duration_ms = cumulative_time
     duration_sec = duration_ms / 1000.0
@@ -501,6 +528,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     os.makedirs(output_dir, exist_ok=True)
     print(f"Rendering {num_frames} frames at {scale_factor}x resolution ({frame_rate} fps)...")
     print(f"Total Video Duration: {duration_sec:.2f}s (Idle time skipped)")
+    print(f"Stroke events: {len(stroke_timeline)}, Eraser events: {len(eraser_timeline)}")
 
     generated_audio_file = None
     if audio_tap and audio_scratch:
@@ -508,6 +536,10 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         generated_audio_file = generate_audio_track(stroke_timeline, duration_ms, audio_tap, audio_scratch, audio_out_path)
 
     frame_number = 0
+    
+    # Track erased areas per stroke for progressive erasing visualization
+    # Key: stroke index, Value: list of erased circles (x, y, size)
+    erased_areas = {}
     
     for frame_idx in range(num_frames):
         current_time = frame_idx * frame_interval_ms
@@ -535,10 +567,25 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
         cursor_pos = None
         cursor_is_eraser = False
         cursor_color = (0,0,0)
+        eraser_size = 20  # Default eraser size
         
         # Check if background is dark for cursor adjustments
         is_bg_dark = is_background_dark(current_page.get('background', {}).get('color', {}))
+        bg_color = current_page.get('background', {}).get('color', {'r':255,'g':255,'b':255})
+        
+        # Update erased areas based on eraser events up to current time
+        for eraser_event in eraser_timeline:
+            if eraser_event['t'] <= current_time:
+                for stroke_idx in eraser_event['affectedStrokes']:
+                    if stroke_idx not in erased_areas:
+                        erased_areas[stroke_idx] = []
+                    erased_areas[stroke_idx].append({
+                        'x': eraser_event['x'],
+                        'y': eraser_event['y'],
+                        'size': eraser_event['size']
+                    })
 
+        # Draw strokes (with erased portions clipped out)
         for stroke_info in stroke_timeline:
             if stroke_info['page']['pageIndex'] != current_page['pageIndex']:
                 continue
@@ -546,6 +593,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 continue
 
             stroke = stroke_info['stroke']
+            stroke_idx = stroke_info['strokeIndex']
             stroke_rel_time = current_time - stroke_info['startTime']
             points = stroke_info['normalizedPoints']
             visible_points = []
@@ -563,28 +611,49 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             is_eraser = stroke.get('tool') == 'eraser' or visible_points[-1].get('isEraser', False)
             
             if is_eraser:
-                # Eraser color = background color? 
-                # Actually, eraser should be same as background color. 
-                # Since draw_background uses the color, we get it here.
-                bg_c = current_page.get('background', {}).get('color', {'r':255,'g':255,'b':255})
-                ctx.set_source_rgb(bg_c.get('r',255)/255, bg_c.get('g',255)/255, bg_c.get('b',255)/255)
+                ctx.set_source_rgb(bg_color.get('r',255)/255, bg_color.get('g',255)/255, bg_color.get('b',255)/255)
                 draw_width = base_width * 4 if stroke.get('tool') != 'eraser' else base_width
             else:
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
                 draw_width = base_width
 
+            # Draw each segment, checking if it's in an erased area
             for i in range(1, len(visible_points)):
                 p1, p2 = visible_points[i-1], visible_points[i]
-                pressure = get_normalized_pressure(p2)
-                ctx.set_line_width(max(0.5, draw_width * pressure))
-                ctx.move_to(p1['x'], p1['y'])
-                ctx.line_to(p2['x'], p2['y'])
-                ctx.stroke()
+                
+                # Check if this segment is in any erased area
+                segment_erased = False
+                if stroke_idx in erased_areas:
+                    for erased in erased_areas[stroke_idx]:
+                        # Check if segment midpoint is within erased circle
+                        mid_x = (p1['x'] + p2['x']) / 2
+                        mid_y = (p1['y'] + p2['y']) / 2
+                        dist = math.hypot(mid_x - erased['x'], mid_y - erased['y'])
+                        if dist < erased['size'] / 2:
+                            segment_erased = True
+                            break
+                
+                if not segment_erased:
+                    pressure = get_normalized_pressure(p2)
+                    ctx.set_line_width(max(0.5, draw_width * pressure))
+                    ctx.move_to(p1['x'], p1['y'])
+                    ctx.line_to(p2['x'], p2['y'])
+                    ctx.stroke()
                 
             if show_cursor and current_time <= stroke_info['endTime']:
                 cursor_pos = (visible_points[-1]['x'], visible_points[-1]['y'])
                 cursor_is_eraser = is_eraser
                 cursor_color = (s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
+
+        # Check for active eraser event at current time and update cursor
+        for eraser_event in eraser_timeline:
+            event_time = eraser_event['t']
+            # Show eraser cursor for a small window around the event
+            if abs(current_time - event_time) < frame_interval_ms:
+                cursor_pos = (eraser_event['x'], eraser_event['y'])
+                cursor_is_eraser = True
+                eraser_size = eraser_event['size']
+                break
 
         if show_cursor and cursor_pos:
             if cursor_is_eraser:

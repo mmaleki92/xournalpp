@@ -101,7 +101,8 @@ XojPageView::XojPageView(XournalView* xournal, const PageRef& page):
         settings(xournal->getControl()->getSettings()),
         eraser(std::make_unique<EraseHandler>(xournal->getControl()->getUndoRedoHandler(),
                                               xournal->getControl()->getDocument(), this->page,
-                                              xournal->getControl()->getToolHandler(), this)),
+                                              xournal->getControl()->getToolHandler(), this,
+                                              xournal->getControl()->getSettings())),
         oldtext(nullptr) {
     this->registerToHandler(this->page);
 }
@@ -298,7 +299,7 @@ auto XojPageView::onButtonPressEvent(const PositionInputData& pos) -> bool {
             this->inputHandler->onButtonPressEvent(pos, zoom);
         }
     } else if (h->getToolType() == TOOL_ERASER) {
-        this->eraser->erase(x, y);
+        this->eraser->erase(x, y, pos.timestamp);
         this->inEraser = true;
     } else if (h->getToolType() == TOOL_LASER_POINTER_PEN || h->getToolType() == TOOL_LASER_POINTER_HIGHLIGHTER) {
         if (!this->laserPointer) {
@@ -563,7 +564,7 @@ auto XojPageView::onMotionNotifyEvent(const PositionInputData& pos) -> bool {
     } else if (this->laserPointer && this->laserPointer->onMotionNotifyEvent(pos, zoom)) {
         // used this event
     } else if (h->getToolType() == TOOL_ERASER && h->getEraserType() != ERASER_TYPE_WHITEOUT && this->inEraser) {
-        this->eraser->erase(x, y);
+        this->eraser->erase(x, y, pos.timestamp);
     }
 
     return false;

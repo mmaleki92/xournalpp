@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <cstddef>  // for size_t
+
 #include "model/PageRef.h"  // for PageRef
 
 class DeleteUndoAction;
@@ -19,6 +21,7 @@ class EraseUndoAction;
 class Layer;
 class Range;
 class LegacyRedrawable;
+class Settings;
 class Stroke;
 class ToolHandler;
 class UndoRedoHandler;
@@ -26,11 +29,17 @@ class UndoRedoHandler;
 class EraseHandler {
 public:
     EraseHandler(UndoRedoHandler* undo, Document* doc, const PageRef& page, ToolHandler* handler,
-                 LegacyRedrawable* view);
+                 LegacyRedrawable* view, Settings* settings = nullptr);
     virtual ~EraseHandler();
 
 public:
-    void erase(double x, double y);
+    /**
+     * @brief Erase at the given position
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param timestamp Timestamp in milliseconds (for motion recording)
+     */
+    void erase(double x, double y, size_t timestamp = 0);
     void finalize();
 
 private:
@@ -42,6 +51,7 @@ private:
     LegacyRedrawable* view;
     Document* doc;
     UndoRedoHandler* undo;
+    Settings* settings;
 
     DeleteUndoAction* eraseDeleteUndoAction;
     EraseUndoAction* eraseUndoAction;

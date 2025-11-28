@@ -7,29 +7,33 @@
 #include <gdk/gdk.h>  // for GdkRectangle
 #include <glib.h>     // for gint
 
-#include "control/ToolEnums.h"            // for ERASER_TYPE_DELETE_STROKE
-#include "control/ToolHandler.h"          // for ToolHandler
-#include "gui/LegacyRedrawable.h"         // for Redrawable
-#include "model/Document.h"               // for Document
-#include "model/Element.h"                // for Element, ELEMENT_STROKE
-#include "model/Layer.h"                  // for Layer
-#include "model/Stroke.h"                 // for Stroke
-#include "model/XojPage.h"                // for XojPage
-#include "model/eraser/ErasableStroke.h"  // for ErasableStroke
-#include "model/eraser/PaddedBox.h"       // for PaddedBox
-#include "undo/DeleteUndoAction.h"        // for DeleteUndoAction
-#include "undo/EraseUndoAction.h"         // for EraseUndoAction
-#include "undo/UndoRedoHandler.h"         // for UndoRedoHandler
-#include "util/Range.h"                   // for Range
-#include "util/SmallVector.h"             // for SmallVector
+#include "control/ToolEnums.h"                // for ERASER_TYPE_DELETE_STROKE
+#include "control/ToolHandler.h"              // for ToolHandler
+#include "control/settings/Settings.h"        // for Settings
+#include "gui/LegacyRedrawable.h"             // for Redrawable
+#include "model/Document.h"                   // for Document
+#include "model/Element.h"                    // for Element, ELEMENT_STROKE
+#include "model/EraserMotionRecording.h"      // for EraserMotionRecording
+#include "model/Layer.h"                      // for Layer
+#include "model/Point.h"                      // for Point
+#include "model/Stroke.h"                     // for Stroke
+#include "model/XojPage.h"                    // for XojPage
+#include "model/eraser/ErasableStroke.h"      // for ErasableStroke
+#include "model/eraser/PaddedBox.h"           // for PaddedBox
+#include "undo/DeleteUndoAction.h"            // for DeleteUndoAction
+#include "undo/EraseUndoAction.h"             // for EraseUndoAction
+#include "undo/UndoRedoHandler.h"             // for UndoRedoHandler
+#include "util/Range.h"                       // for Range
+#include "util/SmallVector.h"                 // for SmallVector
 
 EraseHandler::EraseHandler(UndoRedoHandler* undo, Document* doc, const PageRef& page, ToolHandler* handler,
-                           LegacyRedrawable* view):
+                           LegacyRedrawable* view, Settings* settings):
         page(page),
         handler(handler),
         view(view),
         doc(doc),
         undo(undo),
+        settings(settings),
         eraseDeleteUndoAction(nullptr),
         eraseUndoAction(nullptr),
         halfEraserSize(0) {}
@@ -43,7 +47,7 @@ EraseHandler::~EraseHandler() {
 /**
  * Handle eraser event: "Delete Stroke" and "Standard", Whiteout is not handled here
  */
-void EraseHandler::erase(double x, double y) {
+void EraseHandler::erase(double x, double y, size_t timestamp) {
     this->halfEraserSize = this->handler->getThickness();
     GdkRectangle eraserRect = {gint(x - halfEraserSize), gint(y - halfEraserSize), gint(halfEraserSize * 2),
                                gint(halfEraserSize * 2)};
@@ -51,11 +55,29 @@ void EraseHandler::erase(double x, double y) {
     Range range(x, y);
 
     Layer* l = page->getSelectedLayer();
+    
+    // Record eraser motion if motion export is enabled
+    bool recordingEnabled = settings && settings->getMotionExportEnabled();
+    if (recordingEnabled) {
+        Point eraserPoint(x, y, -1.0);  // No pressure for eraser
+        this->doc->lock();
+        this->doc->getEraserMotionRecording().addMotionPoint(eraserPoint, timestamp, halfEraserSize * 2);
+        this->doc->unlock();
+    }
 
+    size_t strokeIndex = 0;
     for (Element* e: xoj::refElementContainer(l->getElements())) {
         if (e->getType() == ELEMENT_STROKE && e->intersectsArea(&eraserRect)) {
             eraseStroke(l, dynamic_cast<Stroke*>(e), x, y, range);
+            
+            // Record which stroke was affected
+            if (recordingEnabled) {
+                this->doc->lock();
+                this->doc->getEraserMotionRecording().addAffectedStrokeToLast(strokeIndex);
+                this->doc->unlock();
+            }
         }
+        strokeIndex++;
     }
 
     this->view->rerenderRange(range);

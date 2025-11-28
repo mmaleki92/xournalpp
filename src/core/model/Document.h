@@ -29,6 +29,7 @@
 #include "util/PathUtil.h"            // for PathStorageMode
 #include "util/raii/GObjectSPtr.h"    // for GObjectSptr
 
+#include "EraserMotionRecording.h"  // for EraserMotionRecording
 #include "PageRef.h"     // for PageRef
 #include "filesystem.h"  // for path
 
@@ -103,6 +104,17 @@ public:
     inline Util::PathStorageMode getPathStorageMode() const { return pathStorageMode; }
     inline void setPathStorageMode(Util::PathStorageMode m) { pathStorageMode = m; }
 
+    /**
+     * @brief Get the eraser motion recording for this document
+     */
+    EraserMotionRecording& getEraserMotionRecording() { return eraserMotionRecording; }
+    const EraserMotionRecording& getEraserMotionRecording() const { return eraserMotionRecording; }
+    
+    /**
+     * @brief Clear eraser motion recording data
+     */
+    void clearEraserMotionRecording() { eraserMotionRecording.clear(); }
+
 private:
     void buildContentsModel();
     void freeTreeContentModel();
@@ -171,6 +183,11 @@ private:
      * The lock of the document
      */
     std::mutex documentLock;
+    
+    /**
+     * Eraser motion recording for video export
+     */
+    EraserMotionRecording eraserMotionRecording;
 };
 
 template <class InputIter>
