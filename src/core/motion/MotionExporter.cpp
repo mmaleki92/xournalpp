@@ -283,10 +283,14 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
         metadataFile << "  \"eraserEvents\": [\n";
         
         const auto& eraserPoints = eraserRecording.getMotionPoints();
+        // Normalize eraser timestamps to start from 0 (same as stroke timestamps)
+        size_t eraserStartTime = eraserRecording.hasMotionData() ? eraserRecording.getStartTimestamp() : 0;
+        
         for (size_t i = 0; i < eraserPoints.size(); i++) {
             const auto& ep = eraserPoints[i];
             metadataFile << "    {\n";
-            metadataFile << "      \"t\": " << ep.timestamp << ",\n";
+            // Store timestamp relative to eraser recording start (removes idle time offset)
+            metadataFile << "      \"t\": " << (ep.timestamp - eraserStartTime) << ",\n";
             metadataFile << "      \"x\": " << ep.point.x << ",\n";
             metadataFile << "      \"y\": " << ep.point.y << ",\n";
             metadataFile << "      \"size\": " << ep.eraserSize << ",\n";
