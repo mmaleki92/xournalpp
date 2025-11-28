@@ -96,12 +96,6 @@ protected:
 
 private:
     /**
-     * @brief Check if the current stroke is an eraser stroke
-     * @return true if the stroke tool type is ERASER, false otherwise
-     */
-    bool isEraserStroke() const;
-
-    /**
      * @brief Pointer to the Stabilizer instance
      */
     std::unique_ptr<StrokeStabilizer::Base> stabilizer;
