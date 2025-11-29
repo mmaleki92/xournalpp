@@ -237,8 +237,26 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                         }
                         metadataFile << "          },\n";
                         
-                        // Check if stroke has motion recording or is a static fragment
+                        // Check if stroke has motion recording
                         metadataFile << "          \"hasMotionRecording\": " << (stroke->hasMotionRecording() ? "true" : "false") << ",\n";
+                        
+                        // Export geometry points (the actual fragment geometry)
+                        // This is used to know which portion of the original stroke still exists
+                        metadataFile << "          \"geometryPoints\": [\n";
+                        const auto& geomPoints = stroke->getPointVector();
+                        for (size_t i = 0; i < geomPoints.size(); i++) {
+                            const auto& pt = geomPoints[i];
+                            metadataFile << "            {";
+                            metadataFile << "\"x\": " << pt.x << ", ";
+                            metadataFile << "\"y\": " << pt.y << ", ";
+                            metadataFile << "\"p\": " << pt.z;
+                            metadataFile << "}";
+                            if (i < geomPoints.size() - 1) {
+                                metadataFile << ",";
+                            }
+                            metadataFile << "\n";
+                        }
+                        metadataFile << "          ],\n";
                         
                         metadataFile << "          \"motionPoints\": [\n";
 
@@ -266,7 +284,6 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                         } else {
                             // Export geometry points for static fragments (no animation)
                             // These strokes appear instantly at time 0 with their full geometry
-                            const auto& geomPoints = stroke->getPointVector();
                             for (size_t i = 0; i < geomPoints.size(); i++) {
                                 const auto& pt = geomPoints[i];
                                 metadataFile << "            {";

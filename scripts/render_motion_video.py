@@ -499,14 +499,18 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     frame_rate = fps if fps is not None else data['frameRate']
     
     stroke_timeline = []
-    static_strokes = []  # Strokes without motion recording (fragments from erasing)
     eraser_timeline = []
     cumulative_time = 0
     
-    # Build stroke timeline - separate animated strokes from static fragments
+    # Track unique motion recordings to avoid duplicate animations
+    # Key: tuple of first few motion point coordinates, Value: stroke info
+    seen_motion_recordings = {}
+    
+    # Build stroke timeline
     for page in data['pages']:
         for stroke_idx, stroke in enumerate(page.get('strokes', [])):
             motion_points = stroke.get('motionPoints', [])
+            geometry_points = stroke.get('geometryPoints', motion_points)  # Fallback for backwards compat
             has_motion = stroke.get('hasMotionRecording', True)  # Default true for backwards compat
             
             if len(motion_points) >= 2:
@@ -516,26 +520,41 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     stroke_duration = max_t - min_t
                     
                     if has_motion and stroke_duration > 0:
-                        # Animated stroke with motion recording
-                        stroke_timeline.append({
+                        # Create a signature from motion points to detect duplicates
+                        # Use first and last point coordinates as a simple signature
+                        first_pt = motion_points[0]
+                        last_pt = motion_points[-1]
+                        signature = (
+                            round(first_pt['x'], 2), round(first_pt['y'], 2), round(first_pt['t']),
+                            round(last_pt['x'], 2), round(last_pt['y'], 2), round(last_pt['t']),
+                            len(motion_points)
+                        )
+                        
+                        # Skip if we've already seen this motion recording
+                        if signature in seen_motion_recordings:
+                            # This is a fragment with duplicate motion recording
+                            # Just add its geometry to the existing stroke's geometry list
+                            existing = seen_motion_recordings[signature]
+                            if 'fragmentGeometries' not in existing:
+                                existing['fragmentGeometries'] = []
+                            existing['fragmentGeometries'].append(geometry_points)
+                            continue
+                        
+                        # New animated stroke
+                        stroke_info = {
                             'type': 'stroke',
                             'page': page,
                             'stroke': stroke,
                             'strokeIndex': stroke_idx,
                             'startTime': cumulative_time,
                             'endTime': cumulative_time + stroke_duration,
-                            'normalizedPoints': motion_points 
-                        })
+                            'normalizedPoints': motion_points,
+                            'geometryPoints': geometry_points,  # Actual fragment geometry
+                            'fragmentGeometries': [geometry_points]  # List of all fragment geometries
+                        }
+                        stroke_timeline.append(stroke_info)
+                        seen_motion_recordings[signature] = stroke_info
                         cumulative_time += stroke_duration
-                    else:
-                        # Static fragment (no animation) - will be drawn but can be erased
-                        static_strokes.append({
-                            'type': 'static',
-                            'page': page,
-                            'stroke': stroke,
-                            'strokeIndex': stroke_idx,
-                            'points': motion_points  # These are geometry points, not motion points
-                        })
                 except (KeyError, ValueError):
                     continue
     
@@ -543,7 +562,6 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     eraser_events = data.get('eraserEvents', [])
     if eraser_events:
         # Normalize eraser timestamps relative to the stroke timeline
-        # Find the minimum eraser timestamp as reference
         eraser_start_time = min(e['t'] for e in eraser_events)
         eraser_duration = max(e['t'] for e in eraser_events) - eraser_start_time if len(eraser_events) > 1 else 0
         
@@ -572,7 +590,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     os.makedirs(output_dir, exist_ok=True)
     print(f"Rendering {num_frames} frames at {scale_factor}x resolution ({frame_rate} fps)...")
     print(f"Total Video Duration: {duration_sec:.2f}s (Idle time skipped)")
-    print(f"Animated strokes: {len(stroke_timeline)}, Static fragments: {len(static_strokes)}, Eraser events: {len(eraser_timeline)}")
+    print(f"Animated strokes: {len(stroke_timeline)}, Eraser events: {len(eraser_timeline)}")
 
     generated_audio_file = None
     if audio_tap and audio_scratch:
@@ -643,33 +661,15 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
                     return True
             return False
-
-        # Draw static strokes (fragments) first - these appear throughout the video
-        # but can be erased by eraser events
-        for static_info in static_strokes:
-            if static_info['page']['pageIndex'] != current_page['pageIndex']:
-                continue
-            
-            stroke = static_info['stroke']
-            points = static_info['points']
-            
-            if len(points) < 2:
-                continue
-            
-            s_color = stroke.get('color', {'r':0,'g':0,'b':0})
-            base_width = stroke.get('width', 1.5)
-            ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
-            
-            # Draw each segment, checking if it's erased
-            for i in range(1, len(points)):
-                p1, p2 = points[i-1], points[i]
-                
-                if not is_segment_erased(p1, p2, active_eraser_events):
-                    pressure = get_normalized_pressure(p2)
-                    ctx.set_line_width(max(0.5, base_width * pressure))
-                    ctx.move_to(p1['x'], p1['y'])
-                    ctx.line_to(p2['x'], p2['y'])
-                    ctx.stroke()
+        
+        # Helper function to check if a motion point is within any fragment geometry
+        def point_in_any_fragment(px, py, fragment_geometries, tolerance=5.0):
+            """Check if a motion point is close to any point in any fragment geometry"""
+            for geom in fragment_geometries:
+                for pt in geom:
+                    if math.hypot(px - pt['x'], py - pt['y']) < tolerance:
+                        return True
+            return False
 
         # Draw animated strokes (with erased portions clipped out)
         for stroke_info in stroke_timeline:
@@ -681,6 +681,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
             stroke = stroke_info['stroke']
             stroke_rel_time = current_time - stroke_info['startTime']
             points = stroke_info['normalizedPoints']
+            fragment_geometries = stroke_info.get('fragmentGeometries', [])
             visible_points = []
             
             for p in points:
@@ -702,16 +703,26 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
                 draw_width = base_width
 
-            # Draw each segment, checking if it's erased
+            # Draw each segment, but only if it exists in a fragment geometry
+            # and hasn't been erased yet
             for i in range(1, len(visible_points)):
                 p1, p2 = visible_points[i-1], visible_points[i]
                 
-                if not is_segment_erased(p1, p2, active_eraser_events):
-                    pressure = get_normalized_pressure(p2)
-                    ctx.set_line_width(max(0.5, draw_width * pressure))
-                    ctx.move_to(p1['x'], p1['y'])
-                    ctx.line_to(p2['x'], p2['y'])
-                    ctx.stroke()
+                # Check if this segment's points are within any fragment geometry
+                # (i.e., this portion of the stroke still exists after erasing)
+                p1_in_fragment = point_in_any_fragment(p1['x'], p1['y'], fragment_geometries)
+                p2_in_fragment = point_in_any_fragment(p2['x'], p2['y'], fragment_geometries)
+                
+                # Only draw if both endpoints are in a fragment
+                # This ensures we don't draw erased portions of the stroke
+                if p1_in_fragment and p2_in_fragment:
+                    # Also check if it's been erased by eraser events
+                    if not is_segment_erased(p1, p2, active_eraser_events):
+                        pressure = get_normalized_pressure(p2)
+                        ctx.set_line_width(max(0.5, draw_width * pressure))
+                        ctx.move_to(p1['x'], p1['y'])
+                        ctx.line_to(p2['x'], p2['y'])
+                        ctx.stroke()
                 
             if show_cursor and current_time <= stroke_info['endTime']:
                 cursor_pos = (visible_points[-1]['x'], visible_points[-1]['y'])

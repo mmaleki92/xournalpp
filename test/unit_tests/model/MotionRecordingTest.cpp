@@ -194,7 +194,7 @@ TEST(MotionRecording, testSerialization) {
     // This test primarily verifies the API usage compiles correctly.
 }
 
-TEST(MotionRecording, testStrokeSectionCloneDoesNotCopyMotion) {
+TEST(MotionRecording, testStrokeSectionClonePreservesMotion) {
     // Create a stroke with motion recording
     Stroke stroke;
     stroke.addPoint(Point(0.0, 0.0, 0.5));
@@ -221,13 +221,18 @@ TEST(MotionRecording, testStrokeSectionCloneDoesNotCopyMotion) {
     
     auto clonedSection = stroke.cloneSection(lowerBound, upperBound);
     
-    // Cloned sections should NOT have motion recording
-    // Motion recording contains the full original path, which would cause
-    // rendering issues if copied to fragments
-    EXPECT_FALSE(clonedSection->hasMotionRecording());
-    EXPECT_EQ(clonedSection->getMotionRecording(), nullptr);
+    // Cloned sections SHOULD have motion recording preserved
+    // This allows the video renderer to animate the drawing
+    EXPECT_TRUE(clonedSection->hasMotionRecording());
+    EXPECT_NE(clonedSection->getMotionRecording(), nullptr);
     
-    // But the cloned section should have its own geometry points
+    // Verify the motion data is complete (full original motion recording)
+    const auto* clonedMotion = clonedSection->getMotionRecording();
+    EXPECT_EQ(clonedMotion->getMotionPointCount(), 7);  // All motion points preserved
+    EXPECT_EQ(clonedMotion->getStartTimestamp(), 0);
+    EXPECT_EQ(clonedMotion->getEndTimestamp(), 600);
+    
+    // The cloned section should also have its own geometry points
     EXPECT_GE(clonedSection->getPointCount(), 2);
 }
 
@@ -251,7 +256,7 @@ TEST(MotionRecording, testStrokeSectionCloneWithoutMotion) {
     EXPECT_EQ(clonedSection->getMotionRecording(), nullptr);
 }
 
-TEST(MotionRecording, testMultipleSectionCloneNoMotion) {
+TEST(MotionRecording, testMultipleSectionCloneWithMotion) {
     // Create a stroke with motion recording
     Stroke stroke;
     stroke.addPoint(Point(0.0, 0.0, 0.5));
@@ -275,12 +280,15 @@ TEST(MotionRecording, testMultipleSectionCloneNoMotion) {
     auto section1 = stroke.cloneSection(lb1, ub1);
     auto section2 = stroke.cloneSection(lb2, ub2);
     
-    // Neither section should have motion recording
-    // (fragments are rendered as static elements)
-    EXPECT_FALSE(section1->hasMotionRecording());
-    EXPECT_FALSE(section2->hasMotionRecording());
+    // Both sections should have motion recording preserved
+    EXPECT_TRUE(section1->hasMotionRecording());
+    EXPECT_TRUE(section2->hasMotionRecording());
     
-    // Both sections should have geometry points though
+    // Both should have the same motion data (copies)
+    EXPECT_EQ(section1->getMotionRecording()->getMotionPointCount(), 3);
+    EXPECT_EQ(section2->getMotionRecording()->getMotionPointCount(), 3);
+    
+    // Both sections should have geometry points
     EXPECT_GE(section1->getPointCount(), 2);
     EXPECT_GE(section2->getPointCount(), 2);
 }
