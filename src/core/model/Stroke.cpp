@@ -140,11 +140,10 @@ std::unique_ptr<Stroke> Stroke::cloneSection(const PathParameter& lowerBound, co
     // Remove unused pressure value
     s->points.back().z = Point::NO_PRESSURE;
 
-    // Preserve motion recording from the parent stroke
-    // This ensures the drawing history is maintained even when strokes are split by the eraser
-    if (this->motionRecording) {
-        s->motionRecording = std::make_unique<MotionRecording>(*this->motionRecording);
-    }
+    // NOTE: We intentionally do NOT copy motion recording to cloned sections.
+    // Motion recording contains the full original stroke path, which would cause
+    // the video renderer to draw the complete path for each fragment.
+    // Fragments should be rendered as static elements without animation.
 
     return s;
 }
@@ -175,11 +174,10 @@ std::unique_ptr<Stroke> Stroke::cloneCircularSectionOfClosedStroke(const PathPar
     // Remove unused pressure value
     s->points.back().z = Point::NO_PRESSURE;
 
-    // Preserve motion recording from the parent stroke
-    // This ensures the drawing history is maintained even when strokes are split by the eraser
-    if (this->motionRecording) {
-        s->motionRecording = std::make_unique<MotionRecording>(*this->motionRecording);
-    }
+    // NOTE: We intentionally do NOT copy motion recording to cloned sections.
+    // Motion recording contains the full original stroke path, which would cause
+    // the video renderer to draw the complete path for each fragment.
+    // Fragments should be rendered as static elements without animation.
 
     return s;
 }

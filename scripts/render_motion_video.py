@@ -499,28 +499,43 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     frame_rate = fps if fps is not None else data['frameRate']
     
     stroke_timeline = []
+    static_strokes = []  # Strokes without motion recording (fragments from erasing)
     eraser_timeline = []
     cumulative_time = 0
     
-    # Build stroke timeline
+    # Build stroke timeline - separate animated strokes from static fragments
     for page in data['pages']:
         for stroke_idx, stroke in enumerate(page.get('strokes', [])):
             motion_points = stroke.get('motionPoints', [])
+            has_motion = stroke.get('hasMotionRecording', True)  # Default true for backwards compat
+            
             if len(motion_points) >= 2:
                 try:
                     min_t = min(p['t'] for p in motion_points)
                     max_t = max(p['t'] for p in motion_points)
                     stroke_duration = max_t - min_t
-                    stroke_timeline.append({
-                        'type': 'stroke',
-                        'page': page,
-                        'stroke': stroke,
-                        'strokeIndex': stroke_idx,
-                        'startTime': cumulative_time,
-                        'endTime': cumulative_time + stroke_duration,
-                        'normalizedPoints': motion_points 
-                    })
-                    cumulative_time += stroke_duration
+                    
+                    if has_motion and stroke_duration > 0:
+                        # Animated stroke with motion recording
+                        stroke_timeline.append({
+                            'type': 'stroke',
+                            'page': page,
+                            'stroke': stroke,
+                            'strokeIndex': stroke_idx,
+                            'startTime': cumulative_time,
+                            'endTime': cumulative_time + stroke_duration,
+                            'normalizedPoints': motion_points 
+                        })
+                        cumulative_time += stroke_duration
+                    else:
+                        # Static fragment (no animation) - will be drawn but can be erased
+                        static_strokes.append({
+                            'type': 'static',
+                            'page': page,
+                            'stroke': stroke,
+                            'strokeIndex': stroke_idx,
+                            'points': motion_points  # These are geometry points, not motion points
+                        })
                 except (KeyError, ValueError):
                     continue
     
@@ -557,7 +572,7 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
     os.makedirs(output_dir, exist_ok=True)
     print(f"Rendering {num_frames} frames at {scale_factor}x resolution ({frame_rate} fps)...")
     print(f"Total Video Duration: {duration_sec:.2f}s (Idle time skipped)")
-    print(f"Stroke events: {len(stroke_timeline)}, Eraser events: {len(eraser_timeline)}")
+    print(f"Animated strokes: {len(stroke_timeline)}, Static fragments: {len(static_strokes)}, Eraser events: {len(eraser_timeline)}")
 
     generated_audio_file = None
     if audio_tap and audio_scratch:
@@ -608,8 +623,55 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                     'y': eraser_event['y'],
                     'size': eraser_event['size']
                 })
+        
+        # Helper function to check if a segment is erased
+        def is_segment_erased(p1, p2, eraser_events):
+            for erased in eraser_events:
+                eraser_radius = erased['size'] / 2
+                eraser_x, eraser_y = erased['x'], erased['y']
+                
+                # Check p1 (start of segment)
+                dist_p1 = math.hypot(p1['x'] - eraser_x, p1['y'] - eraser_y)
+                # Check p2 (end of segment)  
+                dist_p2 = math.hypot(p2['x'] - eraser_x, p2['y'] - eraser_y)
+                # Check midpoint
+                mid_x = (p1['x'] + p2['x']) / 2
+                mid_y = (p1['y'] + p2['y']) / 2
+                dist_mid = math.hypot(mid_x - eraser_x, mid_y - eraser_y)
+                
+                # Segment is erased if any of the points is within eraser radius
+                if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
+                    return True
+            return False
 
-        # Draw strokes (with erased portions clipped out)
+        # Draw static strokes (fragments) first - these appear throughout the video
+        # but can be erased by eraser events
+        for static_info in static_strokes:
+            if static_info['page']['pageIndex'] != current_page['pageIndex']:
+                continue
+            
+            stroke = static_info['stroke']
+            points = static_info['points']
+            
+            if len(points) < 2:
+                continue
+            
+            s_color = stroke.get('color', {'r':0,'g':0,'b':0})
+            base_width = stroke.get('width', 1.5)
+            ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
+            
+            # Draw each segment, checking if it's erased
+            for i in range(1, len(points)):
+                p1, p2 = points[i-1], points[i]
+                
+                if not is_segment_erased(p1, p2, active_eraser_events):
+                    pressure = get_normalized_pressure(p2)
+                    ctx.set_line_width(max(0.5, base_width * pressure))
+                    ctx.move_to(p1['x'], p1['y'])
+                    ctx.line_to(p2['x'], p2['y'])
+                    ctx.stroke()
+
+        # Draw animated strokes (with erased portions clipped out)
         for stroke_info in stroke_timeline:
             if stroke_info['page']['pageIndex'] != current_page['pageIndex']:
                 continue
@@ -640,31 +702,11 @@ def render_motion_video(metadata_path, output_dir, fps=None, encode_to_video=Non
                 ctx.set_source_rgb(s_color.get('r',0)/255, s_color.get('g',0)/255, s_color.get('b',0)/255)
                 draw_width = base_width
 
-            # Draw each segment, checking if it's in any erased area
+            # Draw each segment, checking if it's erased
             for i in range(1, len(visible_points)):
                 p1, p2 = visible_points[i-1], visible_points[i]
                 
-                # Check if this segment intersects with any eraser event (geometric check)
-                segment_erased = False
-                for erased in active_eraser_events:
-                    eraser_radius = erased['size'] / 2
-                    eraser_x, eraser_y = erased['x'], erased['y']
-                    
-                    # Check p1 (start of segment)
-                    dist_p1 = math.hypot(p1['x'] - eraser_x, p1['y'] - eraser_y)
-                    # Check p2 (end of segment)  
-                    dist_p2 = math.hypot(p2['x'] - eraser_x, p2['y'] - eraser_y)
-                    # Check midpoint
-                    mid_x = (p1['x'] + p2['x']) / 2
-                    mid_y = (p1['y'] + p2['y']) / 2
-                    dist_mid = math.hypot(mid_x - eraser_x, mid_y - eraser_y)
-                    
-                    # Segment is erased if any of the points is within eraser radius
-                    if dist_p1 < eraser_radius or dist_p2 < eraser_radius or dist_mid < eraser_radius:
-                        segment_erased = True
-                        break
-                
-                if not segment_erased:
+                if not is_segment_erased(p1, p2, active_eraser_events):
                     pressure = get_normalized_pressure(p2)
                     ctx.set_line_width(max(0.5, draw_width * pressure))
                     ctx.move_to(p1['x'], p1['y'])

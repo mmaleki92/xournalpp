@@ -194,62 +194,64 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                 const auto& elements = layer->getElements();
                 for (const auto& element : elements) {
                     if (auto* stroke = dynamic_cast<Stroke*>(element.get())) {
-                        if (stroke->hasMotionRecording()) {
-                            if (!firstStroke) {
-                                metadataFile << ",\n";
-                            }
-                            firstStroke = false;
+                        if (!firstStroke) {
+                            metadataFile << ",\n";
+                        }
+                        firstStroke = false;
 
-                            auto* motion = stroke->getMotionRecording();
-                            metadataFile << "        {\n";
-                            
-                            // Add stroke styling properties
-                            metadataFile << "          \"tool\": \"" << getToolTypeName(stroke->getToolType()) << "\",\n";
-                            metadataFile << "          \"width\": " << stroke->getWidth() << ",\n";
-                            
-                            // Add stroke color
-                            Color strokeColor = stroke->getColor();
-                            metadataFile << "          \"color\": {\n";
-                            metadataFile << "            \"r\": " << static_cast<int>(strokeColor.red) << ",\n";
-                            metadataFile << "            \"g\": " << static_cast<int>(strokeColor.green) << ",\n";
-                            metadataFile << "            \"b\": " << static_cast<int>(strokeColor.blue) << ",\n";
-                            metadataFile << "            \"a\": " << static_cast<int>(strokeColor.alpha) << "\n";
-                            metadataFile << "          },\n";
-                            
-                            // Add fill property
-                            metadataFile << "          \"fill\": " << stroke->getFill() << ",\n";
-                            
-                            // Add line style (dashed or solid)
-                            const LineStyle& lineStyle = stroke->getLineStyle();
-                            metadataFile << "          \"lineStyle\": {\n";
-                            metadataFile << "            \"hasDashes\": " << (lineStyle.hasDashes() ? "true" : "false");
-                            if (lineStyle.hasDashes()) {
-                                metadataFile << ",\n";
-                                metadataFile << "            \"dashes\": [";
-                                const auto& dashes = lineStyle.getDashes();
-                                for (size_t i = 0; i < dashes.size(); i++) {
-                                    metadataFile << dashes[i];
-                                    if (i < dashes.size() - 1) {
-                                        metadataFile << ", ";
-                                    }
+                        metadataFile << "        {\n";
+                        
+                        // Add stroke styling properties
+                        metadataFile << "          \"tool\": \"" << getToolTypeName(stroke->getToolType()) << "\",\n";
+                        metadataFile << "          \"width\": " << stroke->getWidth() << ",\n";
+                        
+                        // Add stroke color
+                        Color strokeColor = stroke->getColor();
+                        metadataFile << "          \"color\": {\n";
+                        metadataFile << "            \"r\": " << static_cast<int>(strokeColor.red) << ",\n";
+                        metadataFile << "            \"g\": " << static_cast<int>(strokeColor.green) << ",\n";
+                        metadataFile << "            \"b\": " << static_cast<int>(strokeColor.blue) << ",\n";
+                        metadataFile << "            \"a\": " << static_cast<int>(strokeColor.alpha) << "\n";
+                        metadataFile << "          },\n";
+                        
+                        // Add fill property
+                        metadataFile << "          \"fill\": " << stroke->getFill() << ",\n";
+                        
+                        // Add line style (dashed or solid)
+                        const LineStyle& lineStyle = stroke->getLineStyle();
+                        metadataFile << "          \"lineStyle\": {\n";
+                        metadataFile << "            \"hasDashes\": " << (lineStyle.hasDashes() ? "true" : "false");
+                        if (lineStyle.hasDashes()) {
+                            metadataFile << ",\n";
+                            metadataFile << "            \"dashes\": [";
+                            const auto& dashes = lineStyle.getDashes();
+                            for (size_t i = 0; i < dashes.size(); i++) {
+                                metadataFile << dashes[i];
+                                if (i < dashes.size() - 1) {
+                                    metadataFile << ", ";
                                 }
-                                metadataFile << "]\n";
-                            } else {
-                                metadataFile << "\n";
                             }
-                            metadataFile << "          },\n";
-                            
-                            metadataFile << "          \"motionPoints\": [\n";
+                            metadataFile << "]\n";
+                        } else {
+                            metadataFile << "\n";
+                        }
+                        metadataFile << "          },\n";
+                        
+                        // Check if stroke has motion recording or is a static fragment
+                        metadataFile << "          \"hasMotionRecording\": " << (stroke->hasMotionRecording() ? "true" : "false") << ",\n";
+                        
+                        metadataFile << "          \"motionPoints\": [\n";
 
+                        if (stroke->hasMotionRecording()) {
+                            // Export motion recording points (animated stroke)
+                            auto* motion = stroke->getMotionRecording();
                             const auto& points = motion->getMotionPoints();
                             // Normalize timestamps to start from 0 for each stroke (removes idle time between strokes)
-                            // Use getStartTimestamp() which returns the minimum timestamp, avoiding potential underflow
                             size_t strokeStartTime = motion->hasMotionData() ? motion->getStartTimestamp() : 0;
                             
                             for (size_t i = 0; i < points.size(); i++) {
                                 const auto& mp = points[i];
                                 metadataFile << "            {";
-                                // Store timestamp relative to stroke start (removes idle time)
                                 metadataFile << "\"t\": " << (mp.timestamp - strokeStartTime) << ", ";
                                 metadataFile << "\"x\": " << mp.point.x << ", ";
                                 metadataFile << "\"y\": " << mp.point.y << ", ";
@@ -261,10 +263,28 @@ auto MotionExporter::startExport(fs::path const& outputPath, int frameRate) -> b
                                 }
                                 metadataFile << "\n";
                             }
-
-                            metadataFile << "          ]\n";
-                            metadataFile << "        }";
+                        } else {
+                            // Export geometry points for static fragments (no animation)
+                            // These strokes appear instantly at time 0 with their full geometry
+                            const auto& geomPoints = stroke->getPointVector();
+                            for (size_t i = 0; i < geomPoints.size(); i++) {
+                                const auto& pt = geomPoints[i];
+                                metadataFile << "            {";
+                                metadataFile << "\"t\": 0, ";  // Static - all points at t=0
+                                metadataFile << "\"x\": " << pt.x << ", ";
+                                metadataFile << "\"y\": " << pt.y << ", ";
+                                metadataFile << "\"p\": " << pt.z << ", ";
+                                metadataFile << "\"isEraser\": false";
+                                metadataFile << "}";
+                                if (i < geomPoints.size() - 1) {
+                                    metadataFile << ",";
+                                }
+                                metadataFile << "\n";
+                            }
                         }
+
+                        metadataFile << "          ]\n";
+                        metadataFile << "        }";
                     }
                 }
             }
