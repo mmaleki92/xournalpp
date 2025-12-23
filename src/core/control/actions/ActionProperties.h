@@ -9,6 +9,7 @@
 #include "control/AudioController.h"
 #include "control/Control.h"
 #include "control/ScrollHandler.h"
+#include "control/StrokeRecorder.h"
 #include "control/ToolEnums.h"
 #include "control/UndoRedoController.h"
 #include "control/layer/LayerController.h"
@@ -1096,5 +1097,16 @@ struct ActionProperties<Action::POSITION_HIGHLIGHTING> {
         g_simple_action_set_state(ga, p);
         bool enable = g_variant_get_boolean(p);
         ctrl->getSettings()->setHighlightPosition(enable);
+    }
+};
+
+template <>
+struct ActionProperties<Action::STROKE_RECORDING> {
+    using state_type = bool;
+    static constexpr state_type initialState(Control*) { return false; }
+    static void callback(GSimpleAction* ga, GVariant* p, Control* ctrl) {
+        g_simple_action_set_state(ga, p);
+        bool enabled = g_variant_get_boolean(p);
+        ctrl->toggleStrokeRecording(enabled);
     }
 };
