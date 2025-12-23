@@ -2601,7 +2601,8 @@ void Control::toggleStrokeRecording(bool enable) {
     if (enable) {
         strokeRecorder->startRecording();
         XojMsgBox::showMessageToUser(getGtkWindow(), _("Recording started"),
-                                     _("Stroke recording has started. All your drawing actions will be recorded."));
+                                     _("Stroke recording has started. All your drawing actions will be recorded."),
+                                     GTK_MESSAGE_INFO);
     } else {
         strokeRecorder->stopRecording();
 
@@ -2630,7 +2631,8 @@ void Control::toggleStrokeRecording(bool enable) {
             bool success = strokeRecorder->exportToJson(filepath, imageDir);
             if (success) {
                 XojMsgBox::showMessageToUser(getGtkWindow(), _("Recording saved"),
-                                             FS(_F("Recording saved to {1}") % filepath.string()));
+                                             FS(_F("Recording saved to {1}") % filepath.string()),
+                                             GTK_MESSAGE_INFO);
             } else {
                 XojMsgBox::showErrorToUser(getGtkWindow(), _("Failed to save recording"));
             }
