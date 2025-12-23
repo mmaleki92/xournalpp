@@ -43,7 +43,14 @@ def parse_color(color_str: str) -> Tuple[float, float, float, float]:
     if color_str.startswith("#"):
         color_str = color_str[1:]
     
-    color_int = int(color_str, 16)
+    # Pad with zeros if needed (for short hex codes)
+    color_str = color_str.zfill(8)
+    
+    try:
+        color_int = int(color_str, 16)
+    except ValueError:
+        # Default to black if parsing fails
+        return (0.0, 0.0, 0.0, 1.0)
     
     # Extract ARGB components
     a = ((color_int >> 24) & 0xFF) / 255.0
@@ -154,26 +161,23 @@ def draw_image(ctx: cairo.Context, image_info: dict, image_dir: Path) -> None:
         print(f"Warning: Could not load image {filename}: {e}")
 
 
-def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen") -> None:
+def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen", eraser_size: float = 10) -> None:
     """Draw a cursor at the given position."""
     ctx.save()
     ctx.translate(x, y)
     
     if cursor_type == "eraser":
-        # Draw eraser cursor (circle)
-        ctx.set_source_rgba(0.8, 0.2, 0.2, 0.7)
-        ctx.arc(0, 0, 8, 0, 2 * 3.14159)
+        # Draw eraser cursor (circle) with actual eraser size
+        ctx.set_source_rgba(0.8, 0.2, 0.2, 0.5)
+        ctx.arc(0, 0, eraser_size, 0, 2 * 3.14159)
         ctx.fill()
-        ctx.set_source_rgba(1, 1, 1, 0.9)
-        ctx.arc(0, 0, 6, 0, 2 * 3.14159)
+        ctx.set_source_rgba(1, 1, 1, 0.3)
+        ctx.arc(0, 0, eraser_size * 0.8, 0, 2 * 3.14159)
         ctx.fill()
     else:
-        # Draw pen cursor (triangle)
+        # Draw pen cursor (small dot)
         ctx.set_source_rgba(0.2, 0.2, 0.8, 0.9)
-        ctx.move_to(0, 0)
-        ctx.line_to(-5, 15)
-        ctx.line_to(5, 15)
-        ctx.close_path()
+        ctx.arc(0, 0, 3, 0, 2 * 3.14159)
         ctx.fill()
     
     ctx.restore()
@@ -185,12 +189,33 @@ def generate_frames(recording: dict, image_dir: Path,
     frames = []
     
     duration_ms = recording.get("duration_ms", 1000)
-    total_frames = max(1, int(duration_ms * fps / 1000))
     
-    bg_color = parse_color(recording.get("background_color", "ffffff"))
+    # Get page dimensions for scaling
+    page_width = recording.get("page_width", 595.0)  # Default A4
+    page_height = recording.get("page_height", 842.0)
+    
+    # Calculate scaling to fit the output dimensions while preserving aspect ratio
+    scale_x = width / page_width
+    scale_y = height / page_height
+    scale = min(scale_x, scale_y)
+    
+    # Calculate offset to center the page
+    offset_x = (width - page_width * scale) / 2
+    offset_y = (height - page_height * scale) / 2
+    
+    bg_color = parse_color(recording.get("background_color", "ffffffff"))
     strokes = recording.get("strokes", [])
     images = recording.get("images", [])
     events = recording.get("events", [])
+    
+    # Find the first event timestamp to skip initial idle time
+    first_event_time = 0
+    if events:
+        first_event_time = max(0, events[0].get("timestamp", 0) - 500)  # Start 500ms before first event
+    
+    # Adjust duration
+    adjusted_duration = duration_ms - first_event_time
+    total_frames = max(1, int(adjusted_duration * fps / 1000))
     
     # Create stroke lookup by ID
     stroke_by_id = {s["id"]: s for s in strokes}
@@ -198,16 +223,19 @@ def generate_frames(recording: dict, image_dir: Path,
     # Track active strokes and their progress
     active_strokes = {}  # stroke_id -> progress (0-1)
     completed_strokes = set()
+    erased_strokes = set()  # Track fully erased strokes
     visible_images = {}  # image_id -> image_info
     
     current_cursor_pos = None
     current_cursor_type = "pen"
+    current_eraser_size = 10
     
     # Process events to build frame state
     event_index = 0
     
     for frame_num in range(total_frames):
-        frame_time = int(frame_num * 1000 / fps)
+        # Adjust frame time to account for skipped initial idle time
+        frame_time = first_event_time + int(frame_num * 1000 / fps)
         
         # Process events up to this frame time
         while event_index < len(events) and events[event_index].get("timestamp", 0) <= frame_time:
@@ -240,11 +268,16 @@ def generate_frames(recording: dict, image_dir: Path,
                 
             elif event_type == "erase_start":
                 current_cursor_type = "eraser"
+                current_eraser_size = event.get("eraser_size", 10)
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
                 
             elif event_type == "erase_point":
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
-                # TODO: Handle stroke erasure
+                # Mark affected strokes as erased
+                affected = event.get("affected_strokes", [])
+                for stroke_id in affected:
+                    erased_strokes.add(stroke_id)
+                    completed_strokes.discard(stroke_id)
                 
             elif event_type == "erase_end":
                 current_cursor_type = "pen"
@@ -264,13 +297,13 @@ def generate_frames(recording: dict, image_dir: Path,
                     visible_images[image_id]["y"] = event.get("y", 0)
                     
             elif event_type == "undo":
-                # Simple undo: remove last completed stroke
+                # Simple undo: remove last completed stroke or restore last erased
                 if completed_strokes:
                     last_stroke = max(completed_strokes)
                     completed_strokes.remove(last_stroke)
                     
             elif event_type == "redo":
-                # Simple redo: not implemented in this basic version
+                # Simple redo: restore last removed stroke
                 pass
             
             event_index += 1
@@ -279,17 +312,22 @@ def generate_frames(recording: dict, image_dir: Path,
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         ctx = cairo.Context(surface)
         
-        # Draw background
+        # Draw background (fill entire frame)
         ctx.set_source_rgba(bg_color[0], bg_color[1], bg_color[2], 1.0)
         ctx.paint()
+        
+        # Apply transformation for page scaling
+        ctx.save()
+        ctx.translate(offset_x, offset_y)
+        ctx.scale(scale, scale)
         
         # Draw images
         for img_info in visible_images.values():
             draw_image(ctx, img_info, image_dir)
         
-        # Draw completed strokes
+        # Draw completed strokes (skip erased ones)
         for stroke_id in completed_strokes:
-            if stroke_id in stroke_by_id:
+            if stroke_id in stroke_by_id and stroke_id not in erased_strokes:
                 draw_stroke(ctx, stroke_by_id[stroke_id], 1.0)
         
         # Draw active strokes (in progress)
@@ -299,7 +337,10 @@ def generate_frames(recording: dict, image_dir: Path,
         
         # Draw cursor
         if current_cursor_pos:
-            draw_cursor(ctx, current_cursor_pos[0], current_cursor_pos[1], current_cursor_type)
+            draw_cursor(ctx, current_cursor_pos[0], current_cursor_pos[1], 
+                       current_cursor_type, current_eraser_size)
+        
+        ctx.restore()
         
         # Convert surface to bytes
         surface.flush()

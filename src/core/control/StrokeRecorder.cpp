@@ -15,6 +15,7 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <locale>
 #include <sstream>
 
@@ -430,11 +431,24 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
     // Use "C" locale to ensure consistent number formatting (no thousand separators)
     file.imbue(std::locale::classic());
 
+    // Get page dimensions
+    double pageWidth = 595.0;   // Default A4 width in points
+    double pageHeight = 842.0;  // Default A4 height in points
+    PageRef page = control->getCurrentPage();
+    if (page) {
+        pageWidth = page->getWidth();
+        pageHeight = page->getHeight();
+    }
+
     // Write JSON manually to avoid external dependencies
     file << "{\n";
     file << "  \"version\": \"1.0\",\n";
     file << "  \"duration_ms\": " << getRecordingDuration() << ",\n";
-    file << "  \"background_color\": \"" << std::hex << static_cast<uint32_t>(backgroundColor) << std::dec << "\",\n";
+    file << "  \"page_width\": " << pageWidth << ",\n";
+    file << "  \"page_height\": " << pageHeight << ",\n";
+    file << std::hex << std::setfill('0');
+    file << "  \"background_color\": \"" << std::setw(8) << static_cast<uint32_t>(backgroundColor) << "\",\n";
+    file << std::dec;
 
     // Write strokes
     file << "  \"strokes\": [\n";
@@ -442,7 +456,7 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
         const auto& s = strokes[i];
         file << "    {\n";
         file << "      \"id\": " << s.id << ",\n";
-        file << "      \"color\": \"" << std::hex << static_cast<uint32_t>(s.color) << std::dec << "\",\n";
+        file << "      \"color\": \"" << std::hex << std::setfill('0') << std::setw(8) << static_cast<uint32_t>(s.color) << std::dec << "\",\n";
         file << "      \"width\": " << s.width << ",\n";
         file << "      \"is_highlighter\": " << (s.isHighlighter ? "true" : "false") << ",\n";
         file << "      \"fill\": " << s.fill << ",\n";
@@ -543,16 +557,17 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
                 file << ",\n      \"pressure\": " << e.pressure;
             }
             if (e.type == RecordEventType::STROKE_START) {
-                file << ",\n      \"color\": \"" << std::hex << static_cast<uint32_t>(e.color) << std::dec << "\"";
+                file << ",\n      \"color\": \"" << std::hex << std::setfill('0') << std::setw(8) << static_cast<uint32_t>(e.color) << std::dec << "\"";
                 file << ",\n      \"width\": " << e.width;
             }
-        } else if (e.type == RecordEventType::ERASE_START || e.type == RecordEventType::ERASE_POINT) {
+        } else if (e.type == RecordEventType::ERASE_START || e.type == RecordEventType::ERASE_POINT ||
+                   e.type == RecordEventType::ERASE_END) {
             file << ",\n      \"x\": " << e.x;
             file << ",\n      \"y\": " << e.y;
             if (e.type == RecordEventType::ERASE_START) {
                 file << ",\n      \"eraser_size\": " << e.eraserSize;
             }
-            if (e.type == RecordEventType::ERASE_POINT && !e.affectedStrokeIds.empty()) {
+            if (!e.affectedStrokeIds.empty()) {
                 file << ",\n      \"affected_strokes\": [";
                 for (size_t j = 0; j < e.affectedStrokeIds.size(); ++j) {
                     file << e.affectedStrokeIds[j];
@@ -570,7 +585,7 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
                 file << ",\n      \"height\": " << e.imageHeight;
             }
         } else if (e.type == RecordEventType::BACKGROUND_COLOR_CHANGE) {
-            file << ",\n      \"color\": \"" << std::hex << static_cast<uint32_t>(e.backgroundColor) << std::dec
+            file << ",\n      \"color\": \"" << std::hex << std::setfill('0') << std::setw(8) << static_cast<uint32_t>(e.backgroundColor) << std::dec
                  << "\"";
         }
 
