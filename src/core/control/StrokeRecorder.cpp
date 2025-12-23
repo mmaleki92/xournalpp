@@ -15,6 +15,7 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <locale>
 #include <sstream>
 
 #include "control/Control.h"
@@ -425,6 +426,9 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
     if (!file.is_open()) {
         return false;
     }
+
+    // Use "C" locale to ensure consistent number formatting (no thousand separators)
+    file.imbue(std::locale::classic());
 
     // Write JSON manually to avoid external dependencies
     file << "{\n";
