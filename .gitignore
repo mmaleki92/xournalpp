@@ -64,5 +64,10 @@ Debug
 .DS_STORE
 *~
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # CodeQL artifacts
 _codeql_detected_source_root
