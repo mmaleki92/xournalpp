@@ -180,7 +180,7 @@ def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen"
 
 
 def generate_frames(recording: dict, image_dir: Path, 
-                   width: int, height: int, fps: int) -> List[bytes]:
+                   width: int, height: int, fps: int) -> Tuple[List[bytes], int, int]:
     """Generate frames from the recording."""
     frames = []
     

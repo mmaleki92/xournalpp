@@ -370,13 +370,17 @@ void StrokeRecorder::compressIdleTime() {
     }
 
     // Also compress timestamps in recorded strokes
-    for (auto& stroke: strokes) {
-        for (auto& ts: stroke.pointTimestamps) {
-            // Find the corresponding event and use its compressed timestamp
-            for (const auto& event: events) {
-                if (event.type == RecordEventType::STROKE_POINT && event.strokeId == stroke.id) {
-                    // Match by position in the original list - this is a simplification
-                    break;
+    // Apply the same compression ratio to stroke point timestamps
+    if (totalCompression > 0 && !events.empty()) {
+        int64_t originalDuration = events.back().timestamp + totalCompression;
+        int64_t compressedDuration = events.back().timestamp;
+        
+        if (originalDuration > 0) {
+            double compressionRatio = static_cast<double>(compressedDuration) / static_cast<double>(originalDuration);
+            
+            for (auto& stroke: strokes) {
+                for (auto& ts: stroke.pointTimestamps) {
+                    ts = static_cast<int64_t>(ts * compressionRatio);
                 }
             }
         }
