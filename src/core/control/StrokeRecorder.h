@@ -149,7 +149,7 @@ public:
     /**
      * @brief Record eraser movement
      */
-    void recordErasePoint(double x, double y, const std::vector<int>& affectedStrokeIds);
+    void recordErasePoint(double x, double y, double eraserSize, const std::vector<int>& affectedStrokeIds);
 
     /**
      * @brief Record eraser end

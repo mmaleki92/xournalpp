@@ -444,6 +444,9 @@ def generate_frames(recording: dict, image_dir: Path,
     erased_strokes = set()
     visible_images = {}
     
+    # Track eraser path for masking - list of (x, y, size) tuples
+    eraser_path: List[Tuple[float, float, float]] = []
+    
     current_cursor_pos = None
     current_cursor_type = "pen"
     current_eraser_size = 10
@@ -491,9 +494,17 @@ def generate_frames(recording: dict, image_dir: Path,
                 current_cursor_type = "eraser"
                 current_eraser_size = event.get("eraser_size", 10)
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
+                # Add starting point of eraser path
+                eraser_path.append((event.get("x", 0), event.get("y", 0), current_eraser_size))
                 
             elif event_type == "erase_point":
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
+                esize = event.get("eraser_size", current_eraser_size)
+                if esize > 0:
+                    current_eraser_size = esize
+                # Add point to eraser path for masking
+                eraser_path.append((event.get("x", 0), event.get("y", 0), current_eraser_size))
+                # Also handle affected strokes if provided
                 affected = event.get("affected_strokes", [])
                 for stroke_id in affected:
                     erased_strokes.add(stroke_id)
@@ -526,11 +537,11 @@ def generate_frames(recording: dict, image_dir: Path,
             
             event_index += 1
         
-        # Create frame surface
+        # Create main frame surface
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         ctx = cairo.Context(surface)
         
-        # Draw background
+        # Draw background color
         ctx.set_source_rgba(bg_color[0], bg_color[1], bg_color[2], 1.0)
         ctx.paint()
         
@@ -542,26 +553,68 @@ def generate_frames(recording: dict, image_dir: Path,
         # Draw background pattern
         draw_background_pattern(ctx, int(page_width), int(page_height), bg_color, bg_pattern)
         
-        # Draw images
-        for img_info in visible_images.values():
-            draw_image(ctx, img_info, image_dir)
+        ctx.restore()
         
-        # Draw completed strokes (skip erased ones)
+        # Create a separate surface for strokes (so we can erase from it)
+        stroke_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+        stroke_ctx = cairo.Context(stroke_surface)
+        
+        # Apply same transformation to stroke surface
+        stroke_ctx.translate(offset_x, offset_y)
+        stroke_ctx.scale(scale, scale)
+        
+        # Draw images on stroke layer
+        for img_info in visible_images.values():
+            draw_image(stroke_ctx, img_info, image_dir)
+        
+        # Draw completed strokes (skip fully erased ones)
         for stroke_id in completed_strokes:
             if stroke_id in stroke_by_id and stroke_id not in erased_strokes:
-                draw_stroke(ctx, stroke_by_id[stroke_id], 1.0)
+                draw_stroke(stroke_ctx, stroke_by_id[stroke_id], 1.0)
         
         # Draw active strokes (in progress)
         for stroke_id, progress in active_strokes.items():
             if stroke_id in stroke_by_id:
-                draw_stroke(ctx, stroke_by_id[stroke_id], progress)
+                draw_stroke(stroke_ctx, stroke_by_id[stroke_id], progress)
         
-        # Draw cursor
+        # Apply eraser mask to stroke surface
+        # Use DEST_OUT to cut holes where eraser path is
+        if eraser_path:
+            stroke_ctx.save()
+            stroke_ctx.set_operator(cairo.OPERATOR_DEST_OUT)
+            stroke_ctx.set_source_rgba(1, 1, 1, 1)  # Full erase
+            stroke_ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+            stroke_ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+            
+            # Draw eraser path as a thick line that removes content
+            for i in range(len(eraser_path)):
+                ex, ey, esize = eraser_path[i]
+                # Draw a filled circle at each point
+                stroke_ctx.arc(ex, ey, esize / 2, 0, 2 * math.pi)
+                stroke_ctx.fill()
+                
+                # Also draw lines between consecutive points for smooth erasing
+                if i > 0:
+                    prev_x, prev_y, prev_size = eraser_path[i - 1]
+                    stroke_ctx.set_line_width(max(esize, prev_size))
+                    stroke_ctx.move_to(prev_x, prev_y)
+                    stroke_ctx.line_to(ex, ey)
+                    stroke_ctx.stroke()
+            
+            stroke_ctx.restore()
+        
+        # Composite stroke surface onto main surface
+        ctx.set_source_surface(stroke_surface, 0, 0)
+        ctx.paint()
+        
+        # Draw cursor on top
         if show_cursor and current_cursor_pos:
+            ctx.save()
+            ctx.translate(offset_x, offset_y)
+            ctx.scale(scale, scale)
             draw_cursor(ctx, current_cursor_pos[0], current_cursor_pos[1],
                        current_cursor_type, current_eraser_size, current_stroke_color, is_dark_bg)
-        
-        ctx.restore()
+            ctx.restore()
         
         # Convert surface to bytes
         surface.flush()

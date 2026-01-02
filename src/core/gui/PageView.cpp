@@ -574,7 +574,8 @@ auto XojPageView::onMotionNotifyEvent(const PositionInputData& pos) -> bool {
         
         // Record eraser point for stroke recording
         if (StrokeRecorder* recorder = this->xournal->getControl()->getStrokeRecorder(); recorder && recorder->isRecording()) {
-            recorder->recordErasePoint(x, y, {});  // Empty vector as we don't have affected stroke IDs here
+            double eraserSize = h->getThickness();
+            recorder->recordErasePoint(x, y, eraserSize, {});  // Empty vector as we don't have affected stroke IDs here
         }
     }
 

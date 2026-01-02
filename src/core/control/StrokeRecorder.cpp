@@ -188,7 +188,7 @@ void StrokeRecorder::recordEraseStart(double x, double y, double eraserSize, siz
     lastEventTime = event.timestamp;
 }
 
-void StrokeRecorder::recordErasePoint(double x, double y, const std::vector<int>& affectedStrokeIds) {
+void StrokeRecorder::recordErasePoint(double x, double y, double eraserSize, const std::vector<int>& affectedStrokeIds) {
     if (!recording) {
         return;
     }
@@ -199,6 +199,7 @@ void StrokeRecorder::recordErasePoint(double x, double y, const std::vector<int>
     event.pageNumber = currentPage;
     event.x = x;
     event.y = y;
+    event.eraserSize = eraserSize;
     event.affectedStrokeIds = affectedStrokeIds;
 
     events.push_back(event);
@@ -564,7 +565,7 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
                    e.type == RecordEventType::ERASE_END) {
             file << ",\n      \"x\": " << e.x;
             file << ",\n      \"y\": " << e.y;
-            if (e.type == RecordEventType::ERASE_START) {
+            if (e.type == RecordEventType::ERASE_START || e.type == RecordEventType::ERASE_POINT) {
                 file << ",\n      \"eraser_size\": " << e.eraserSize;
             }
             if (!e.affectedStrokeIds.empty()) {
