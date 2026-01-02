@@ -411,9 +411,8 @@ bool StrokeRecorder::storeImage(const Image* image, const fs::path& imageDir, co
 }
 
 bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imageDir) const {
-    if (events.empty()) {
-        return false;
-    }
+    // Allow empty recordings - they will just have no events
+    // This is not an error condition
 
     // Create image directory if it doesn't exist
     if (!fs::exists(imageDir)) {
