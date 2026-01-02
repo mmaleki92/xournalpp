@@ -670,6 +670,10 @@ def generate_frames(recording: dict, image_dir: Path,
         width = int(page_width * scale_factor)
         height = int(page_height * scale_factor)
     
+    # Ensure even dimensions (required by h264 with yuv420p)
+    width = (width + 1) // 2 * 2
+    height = (height + 1) // 2 * 2
+    
     # Calculate scaling to fit the output dimensions while preserving aspect ratio
     scale_x = width / page_width
     scale_y = height / page_height
