@@ -57,10 +57,218 @@ SAMPLE_RATE = 44100
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH = 2  # 16-bit
 
+# Audio file cache
+SCRATCH_SOUND = None
+TAP_SOUND = None
+ERASER_SOUND = None
 
-def generate_scratch_sound(duration_ms: int, frequency: float = 800, 
-                           amplitude: float = 0.3) -> np.ndarray:
-    """Generate a scratch/writing sound effect."""
+
+def load_audio_files(script_dir: Path) -> None:
+    """Load audio files from the script directory."""
+    global SCRATCH_SOUND, TAP_SOUND, ERASER_SOUND
+    
+    if not AUDIO_AVAILABLE:
+        return
+    
+    scratch_path = script_dir / "scratch.wav"
+    tap_path = script_dir / "tap.wav"
+    
+    # Load scratch sound (also used for eraser)
+    if scratch_path.exists():
+        try:
+            with wave.open(str(scratch_path), 'rb') as wav_file:
+                n_channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                framerate = wav_file.getframerate()
+                n_frames = wav_file.getnframes()
+                audio_data = wav_file.readframes(n_frames)
+                
+                # Convert to numpy array
+                if sample_width == 2:
+                    dtype = np.int16
+                elif sample_width == 1:
+                    dtype = np.uint8
+                else:
+                    dtype = np.int32
+                
+                samples = np.frombuffer(audio_data, dtype=dtype).astype(np.float32)
+                
+                # Convert to mono if stereo
+                if n_channels == 2:
+                    samples = samples.reshape(-1, 2).mean(axis=1)
+                
+                # Normalize to -1 to 1
+                if dtype == np.int16:
+                    samples = samples / 32767.0
+                elif dtype == np.uint8:
+                    samples = (samples - 128) / 128.0
+                
+                # Resample if needed
+                if framerate != SAMPLE_RATE:
+                    old_len = len(samples)
+                    new_len = int(old_len * SAMPLE_RATE / framerate)
+                    indices = np.linspace(0, old_len - 1, new_len)
+                    samples = np.interp(indices, np.arange(old_len), samples)
+                
+                SCRATCH_SOUND = samples
+                ERASER_SOUND = samples  # Use scratch for eraser too
+                print(f"Loaded audio: {scratch_path}")
+        except Exception as e:
+            print(f"Warning: Could not load {scratch_path}: {e}")
+    
+    # Load tap sound
+    if tap_path.exists():
+        try:
+            with wave.open(str(tap_path), 'rb') as wav_file:
+                n_channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                framerate = wav_file.getframerate()
+                n_frames = wav_file.getnframes()
+                audio_data = wav_file.readframes(n_frames)
+                
+                # Convert to numpy array
+                if sample_width == 2:
+                    dtype = np.int16
+                elif sample_width == 1:
+                    dtype = np.uint8
+                else:
+                    dtype = np.int32
+                
+                samples = np.frombuffer(audio_data, dtype=dtype).astype(np.float32)
+                
+                # Convert to mono if stereo
+                if n_channels == 2:
+                    samples = samples.reshape(-1, 2).mean(axis=1)
+                
+                # Normalize to -1 to 1
+                if dtype == np.int16:
+                    samples = samples / 32767.0
+                elif dtype == np.uint8:
+                    samples = (samples - 128) / 128.0
+                
+                # Resample if needed
+                if framerate != SAMPLE_RATE:
+                    old_len = len(samples)
+                    new_len = int(old_len * SAMPLE_RATE / framerate)
+                    indices = np.linspace(0, old_len - 1, new_len)
+                    samples = np.interp(indices, np.arange(old_len), samples)
+                
+                TAP_SOUND = samples
+                print(f"Loaded audio: {tap_path}")
+        except Exception as e:
+            print(f"Warning: Could not load {tap_path}: {e}")
+
+
+def get_scratch_chunk(duration_ms: int, speed_factor: float = 1.0, 
+                      amplitude: float = 0.3) -> np.ndarray:
+    """Get a chunk of scratch sound with specified duration and modulation."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    target_samples = int(SAMPLE_RATE * duration_ms / 1000)
+    if target_samples == 0:
+        return np.array([])
+    
+    if SCRATCH_SOUND is not None and len(SCRATCH_SOUND) > 0:
+        # Use loaded audio file
+        source = SCRATCH_SOUND
+        source_len = len(source)
+        
+        # Determine how much of the source to use based on speed
+        # Faster speed = higher pitch = compress more source into same time
+        pitch_factor = 0.8 + min(speed_factor * 0.4, 1.2)  # 0.8 to 2.0
+        source_samples_needed = int(target_samples * pitch_factor)
+        
+        # Loop the source if needed
+        if source_samples_needed > source_len:
+            repeats = int(np.ceil(source_samples_needed / source_len))
+            source = np.tile(source, repeats)
+        
+        # Take the required portion and resample to target length
+        source_chunk = source[:source_samples_needed]
+        indices = np.linspace(0, len(source_chunk) - 1, target_samples)
+        sound = np.interp(indices, np.arange(len(source_chunk)), source_chunk)
+        
+        # Apply amplitude
+        sound = sound * amplitude
+        
+        # Fade in/out
+        fade_samples = min(int(SAMPLE_RATE * 0.01), target_samples // 4)
+        if fade_samples > 0:
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            sound[:fade_samples] *= fade_in
+            sound[-fade_samples:] *= fade_out
+        
+        return (sound * 32767).astype(np.int16)
+    else:
+        # Fall back to synthetic generation
+        return generate_scratch_sound_synthetic(duration_ms, 600 + speed_factor * 400, amplitude)
+
+
+def get_tap_chunk(amplitude: float = 0.4) -> np.ndarray:
+    """Get a tap sound with specified amplitude."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    if TAP_SOUND is not None and len(TAP_SOUND) > 0:
+        # Use loaded audio file
+        sound = TAP_SOUND * amplitude
+        return (sound * 32767).astype(np.int16)
+    else:
+        # Fall back to synthetic generation
+        return generate_tap_sound_synthetic(50, 1200, amplitude)
+
+
+def get_eraser_chunk(duration_ms: int, speed_factor: float = 1.0,
+                     amplitude: float = 0.25) -> np.ndarray:
+    """Get a chunk of eraser sound with specified duration and modulation."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    target_samples = int(SAMPLE_RATE * duration_ms / 1000)
+    if target_samples == 0:
+        return np.array([])
+    
+    if ERASER_SOUND is not None and len(ERASER_SOUND) > 0:
+        # Use loaded audio file (with lower pitch for eraser)
+        source = ERASER_SOUND
+        source_len = len(source)
+        
+        # Lower pitch for eraser (slower playback)
+        pitch_factor = 0.5 + min(speed_factor * 0.3, 0.8)  # 0.5 to 1.3
+        source_samples_needed = int(target_samples * pitch_factor)
+        
+        # Loop the source if needed
+        if source_samples_needed > source_len:
+            repeats = int(np.ceil(source_samples_needed / source_len))
+            source = np.tile(source, repeats)
+        
+        # Take the required portion and resample to target length
+        source_chunk = source[:source_samples_needed]
+        indices = np.linspace(0, len(source_chunk) - 1, target_samples)
+        sound = np.interp(indices, np.arange(len(source_chunk)), source_chunk)
+        
+        # Apply amplitude
+        sound = sound * amplitude
+        
+        # Fade in/out
+        fade_samples = min(int(SAMPLE_RATE * 0.02), target_samples // 4)
+        if fade_samples > 0:
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            sound[:fade_samples] *= fade_in
+            sound[-fade_samples:] *= fade_out
+        
+        return (sound * 32767).astype(np.int16)
+    else:
+        # Fall back to synthetic generation
+        return generate_eraser_sound_synthetic(duration_ms, amplitude)
+
+
+def generate_scratch_sound_synthetic(duration_ms: int, frequency: float = 800, 
+                                     amplitude: float = 0.3) -> np.ndarray:
+    """Generate a synthetic scratch/writing sound effect."""
     if not AUDIO_AVAILABLE:
         return np.array([])
     
@@ -93,9 +301,9 @@ def generate_scratch_sound(duration_ms: int, frequency: float = 800,
     return (sound * 32767).astype(np.int16)
 
 
-def generate_tap_sound(duration_ms: int = 50, frequency: float = 1200,
-                       amplitude: float = 0.4) -> np.ndarray:
-    """Generate a short tap sound effect."""
+def generate_tap_sound_synthetic(duration_ms: int = 50, frequency: float = 1200,
+                                 amplitude: float = 0.4) -> np.ndarray:
+    """Generate a synthetic short tap sound effect."""
     if not AUDIO_AVAILABLE:
         return np.array([])
     
@@ -115,8 +323,8 @@ def generate_tap_sound(duration_ms: int = 50, frequency: float = 1200,
     return (sound * 32767).astype(np.int16)
 
 
-def generate_eraser_sound(duration_ms: int, amplitude: float = 0.25) -> np.ndarray:
-    """Generate an eraser rubbing sound effect."""
+def generate_eraser_sound_synthetic(duration_ms: int, amplitude: float = 0.25) -> np.ndarray:
+    """Generate a synthetic eraser rubbing sound effect."""
     if not AUDIO_AVAILABLE:
         return np.array([])
     
@@ -198,7 +406,7 @@ def create_audio_track(events: List[dict], duration_ms: int,
                 
                 if stroke_duration < 100 or total_distance < 20:
                     # Short stroke = tap sound
-                    sound = generate_tap_sound(50, 1200, min(0.5, 0.2 + avg_speed / 2000))
+                    sound = get_tap_chunk(min(0.5, 0.2 + avg_speed / 2000))
                     start_sample = int(current_stroke_start * SAMPLE_RATE / 1000)
                     end_sample = min(start_sample + len(sound), total_samples)
                     if start_sample < total_samples and len(sound) > 0:
@@ -217,10 +425,10 @@ def create_audio_track(events: List[dict], duration_ms: int,
                             segment_speed = segment_dist / segment_time * 1000
                             # Amplitude based on speed
                             amp = min(0.4, 0.1 + segment_speed / 3000)
-                            # Frequency based on speed (faster = higher pitch)
-                            freq = 600 + min(segment_speed * 2, 800)
+                            # Speed factor for pitch modulation
+                            speed_factor = segment_speed / 500  # normalize
                             
-                            sound = generate_scratch_sound(int(segment_time), freq, amp)
+                            sound = get_scratch_chunk(int(segment_time), speed_factor, amp)
                             start_sample = int(p1[2] * SAMPLE_RATE / 1000)
                             end_sample = min(start_sample + len(sound), total_samples)
                             if start_sample < total_samples and len(sound) > 0:
@@ -250,8 +458,9 @@ def create_audio_track(events: List[dict], duration_ms: int,
                     if segment_time > 0 and segment_dist > 1:
                         segment_speed = segment_dist / segment_time * 1000
                         amp = min(0.35, 0.1 + segment_speed / 3000)
+                        speed_factor = segment_speed / 500  # normalize
                         
-                        sound = generate_eraser_sound(int(segment_time), amp)
+                        sound = get_eraser_chunk(int(segment_time), speed_factor, amp)
                         start_sample = int(p1[2] * SAMPLE_RATE / 1000)
                         end_sample = min(start_sample + len(sound), total_samples)
                         if start_sample < total_samples and len(sound) > 0:
@@ -980,6 +1189,10 @@ def main():
     if not args.input.exists():
         print(f"Error: Input file not found: {args.input}")
         sys.exit(1)
+    
+    # Load audio files from script directory (scratch.wav and tap.wav)
+    script_dir = Path(__file__).parent
+    load_audio_files(script_dir)
     
     with open(args.input) as f:
         recording = json.load(f)
