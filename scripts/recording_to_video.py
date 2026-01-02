@@ -8,21 +8,26 @@ converts it to a video or GIF using Cairo and ffmpeg.
 Usage:
     python recording_to_video.py recording.json output.mp4 [--fps 30] [--width 1920] [--height 1080]
     python recording_to_video.py recording.json output.gif [--fps 15] [--width 800] [--height 600]
+    python recording_to_video.py recording.json output.mp4 --audio  # With sound effects
 
 Requirements:
     - Python 3.7+
     - pycairo
     - Pillow (PIL)
     - ffmpeg (for video output)
+    - numpy (optional, for audio)
+    - scipy (optional, for audio)
 """
 
 import argparse
 import json
 import math
 import os
+import struct
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -37,6 +42,243 @@ try:
 except ImportError:
     print("Error: Pillow is required. Install with: pip install Pillow")
     sys.exit(1)
+
+# Optional audio support
+AUDIO_AVAILABLE = False
+try:
+    import numpy as np
+    AUDIO_AVAILABLE = True
+except ImportError:
+    pass
+
+
+# Audio parameters
+SAMPLE_RATE = 44100
+AUDIO_CHANNELS = 1
+AUDIO_SAMPLE_WIDTH = 2  # 16-bit
+
+
+def generate_scratch_sound(duration_ms: int, frequency: float = 800, 
+                           amplitude: float = 0.3) -> np.ndarray:
+    """Generate a scratch/writing sound effect."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    samples = int(SAMPLE_RATE * duration_ms / 1000)
+    if samples == 0:
+        return np.array([])
+    
+    t = np.linspace(0, duration_ms / 1000, samples)
+    
+    # Create a noisy scratch sound by combining multiple frequencies with noise
+    noise = np.random.uniform(-1, 1, samples) * 0.3
+    
+    # Add some tonal component (friction-like)
+    tone1 = np.sin(2 * np.pi * frequency * t) * 0.2
+    tone2 = np.sin(2 * np.pi * (frequency * 1.5) * t) * 0.1
+    
+    # Modulate with low frequency to make it sound like friction
+    modulation = 0.5 + 0.5 * np.sin(2 * np.pi * 20 * t)
+    
+    sound = (noise + tone1 + tone2) * modulation * amplitude
+    
+    # Apply fade in/out
+    fade_samples = min(int(SAMPLE_RATE * 0.01), samples // 4)
+    if fade_samples > 0:
+        fade_in = np.linspace(0, 1, fade_samples)
+        fade_out = np.linspace(1, 0, fade_samples)
+        sound[:fade_samples] *= fade_in
+        sound[-fade_samples:] *= fade_out
+    
+    return (sound * 32767).astype(np.int16)
+
+
+def generate_tap_sound(duration_ms: int = 50, frequency: float = 1200,
+                       amplitude: float = 0.4) -> np.ndarray:
+    """Generate a short tap sound effect."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    samples = int(SAMPLE_RATE * duration_ms / 1000)
+    if samples == 0:
+        return np.array([])
+    
+    t = np.linspace(0, duration_ms / 1000, samples)
+    
+    # Create a short percussive sound
+    decay = np.exp(-t * 50)  # Rapid decay
+    tone = np.sin(2 * np.pi * frequency * t)
+    noise = np.random.uniform(-1, 1, samples) * 0.2
+    
+    sound = (tone + noise) * decay * amplitude
+    
+    return (sound * 32767).astype(np.int16)
+
+
+def generate_eraser_sound(duration_ms: int, amplitude: float = 0.25) -> np.ndarray:
+    """Generate an eraser rubbing sound effect."""
+    if not AUDIO_AVAILABLE:
+        return np.array([])
+    
+    samples = int(SAMPLE_RATE * duration_ms / 1000)
+    if samples == 0:
+        return np.array([])
+    
+    t = np.linspace(0, duration_ms / 1000, samples)
+    
+    # Eraser sound: lower frequency, more "whooshy"
+    noise = np.random.uniform(-1, 1, samples)
+    
+    # Low-pass filter effect using moving average
+    window_size = 50
+    if samples > window_size:
+        noise = np.convolve(noise, np.ones(window_size) / window_size, mode='same')
+    
+    # Add some low rumble
+    rumble = np.sin(2 * np.pi * 100 * t) * 0.1
+    
+    # Modulate
+    modulation = 0.7 + 0.3 * np.sin(2 * np.pi * 15 * t)
+    
+    sound = (noise + rumble) * modulation * amplitude
+    
+    # Fade in/out
+    fade_samples = min(int(SAMPLE_RATE * 0.02), samples // 4)
+    if fade_samples > 0:
+        fade_in = np.linspace(0, 1, fade_samples)
+        fade_out = np.linspace(1, 0, fade_samples)
+        sound[:fade_samples] *= fade_in
+        sound[-fade_samples:] *= fade_out
+    
+    return (sound * 32767).astype(np.int16)
+
+
+def create_audio_track(events: List[dict], duration_ms: int, 
+                       first_event_time: int) -> Optional[bytes]:
+    """Create an audio track synchronized with the recording events."""
+    if not AUDIO_AVAILABLE:
+        print("Warning: numpy not available, audio disabled")
+        return None
+    
+    # Create a silent audio track
+    total_samples = int(SAMPLE_RATE * (duration_ms + 1000) / 1000)
+    audio_track = np.zeros(total_samples, dtype=np.float32)
+    
+    # Track stroke and eraser segments for sound generation
+    current_stroke_start = None
+    current_stroke_points = []
+    current_eraser_start = None
+    current_eraser_points = []
+    
+    for event in events:
+        event_type = event.get("type", "")
+        timestamp = event.get("timestamp", 0) - first_event_time
+        
+        if event_type == "stroke_start":
+            current_stroke_start = timestamp
+            current_stroke_points = [(event.get("x", 0), event.get("y", 0), timestamp)]
+            
+        elif event_type == "stroke_point":
+            if current_stroke_start is not None:
+                current_stroke_points.append((event.get("x", 0), event.get("y", 0), timestamp))
+                
+        elif event_type == "stroke_end":
+            if current_stroke_start is not None and len(current_stroke_points) >= 2:
+                # Calculate stroke characteristics
+                stroke_duration = timestamp - current_stroke_start
+                
+                # Calculate total distance and average speed
+                total_distance = 0
+                for i in range(1, len(current_stroke_points)):
+                    p1 = current_stroke_points[i - 1]
+                    p2 = current_stroke_points[i]
+                    total_distance += math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+                
+                avg_speed = total_distance / max(stroke_duration, 1) * 1000  # pixels per second
+                
+                if stroke_duration < 100 or total_distance < 20:
+                    # Short stroke = tap sound
+                    sound = generate_tap_sound(50, 1200, min(0.5, 0.2 + avg_speed / 2000))
+                    start_sample = int(current_stroke_start * SAMPLE_RATE / 1000)
+                    end_sample = min(start_sample + len(sound), total_samples)
+                    if start_sample < total_samples and len(sound) > 0:
+                        audio_track[start_sample:end_sample] += sound[:end_sample - start_sample].astype(np.float32) / 32767
+                else:
+                    # Longer stroke = scratch sound, modulated by speed
+                    # Generate sound in chunks based on point segments
+                    for i in range(1, len(current_stroke_points)):
+                        p1 = current_stroke_points[i - 1]
+                        p2 = current_stroke_points[i]
+                        
+                        segment_dist = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+                        segment_time = p2[2] - p1[2]
+                        
+                        if segment_time > 0 and segment_dist > 1:
+                            segment_speed = segment_dist / segment_time * 1000
+                            # Amplitude based on speed
+                            amp = min(0.4, 0.1 + segment_speed / 3000)
+                            # Frequency based on speed (faster = higher pitch)
+                            freq = 600 + min(segment_speed * 2, 800)
+                            
+                            sound = generate_scratch_sound(int(segment_time), freq, amp)
+                            start_sample = int(p1[2] * SAMPLE_RATE / 1000)
+                            end_sample = min(start_sample + len(sound), total_samples)
+                            if start_sample < total_samples and len(sound) > 0:
+                                audio_track[start_sample:end_sample] += sound[:end_sample - start_sample].astype(np.float32) / 32767
+            
+            current_stroke_start = None
+            current_stroke_points = []
+            
+        elif event_type == "erase_start":
+            current_eraser_start = timestamp
+            current_eraser_points = [(event.get("x", 0), event.get("y", 0), timestamp)]
+            
+        elif event_type == "erase_point":
+            if current_eraser_start is not None:
+                current_eraser_points.append((event.get("x", 0), event.get("y", 0), timestamp))
+                
+        elif event_type == "erase_end":
+            if current_eraser_start is not None and len(current_eraser_points) >= 2:
+                # Generate eraser sound based on movement
+                for i in range(1, len(current_eraser_points)):
+                    p1 = current_eraser_points[i - 1]
+                    p2 = current_eraser_points[i]
+                    
+                    segment_dist = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+                    segment_time = p2[2] - p1[2]
+                    
+                    if segment_time > 0 and segment_dist > 1:
+                        segment_speed = segment_dist / segment_time * 1000
+                        amp = min(0.35, 0.1 + segment_speed / 3000)
+                        
+                        sound = generate_eraser_sound(int(segment_time), amp)
+                        start_sample = int(p1[2] * SAMPLE_RATE / 1000)
+                        end_sample = min(start_sample + len(sound), total_samples)
+                        if start_sample < total_samples and len(sound) > 0:
+                            audio_track[start_sample:end_sample] += sound[:end_sample - start_sample].astype(np.float32) / 32767
+            
+            current_eraser_start = None
+            current_eraser_points = []
+    
+    # Normalize and clip
+    max_val = np.max(np.abs(audio_track))
+    if max_val > 0:
+        audio_track = audio_track / max_val * 0.8
+    audio_track = np.clip(audio_track, -1.0, 1.0)
+    
+    # Convert to 16-bit PCM
+    audio_data = (audio_track * 32767).astype(np.int16)
+    
+    return audio_data.tobytes()
+
+
+def save_audio_wav(audio_data: bytes, filepath: Path) -> None:
+    """Save audio data to a WAV file."""
+    with wave.open(str(filepath), 'w') as wav_file:
+        wav_file.setnchannels(AUDIO_CHANNELS)
+        wav_file.setsampwidth(AUDIO_SAMPLE_WIDTH)
+        wav_file.setframerate(SAMPLE_RATE)
+        wav_file.writeframes(audio_data)
 
 
 def parse_color(color_str: str) -> Tuple[float, float, float, float]:
@@ -400,8 +642,8 @@ def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen"
 def generate_frames(recording: dict, image_dir: Path, 
                    width: int, height: int, fps: int,
                    show_cursor: bool = True,
-                   bg_pattern: str = "plain") -> Tuple[List[bytes], int, int]:
-    """Generate frames from the recording."""
+                   bg_pattern: str = "plain") -> Tuple[List[bytes], int, int, int]:
+    """Generate frames from the recording. Returns (frames, width, height, first_event_time)."""
     frames = []
     
     duration_ms = recording.get("duration_ms", 1000)
@@ -620,7 +862,7 @@ def generate_frames(recording: dict, image_dir: Path,
         surface.flush()
         frames.append(surface.get_data().tobytes())
     
-    return frames, width, height
+    return frames, width, height, first_event_time
 
 
 def save_as_gif(frames: List[bytes], width: int, height: int, 
@@ -644,8 +886,8 @@ def save_as_gif(frames: List[bytes], width: int, height: int,
 
 
 def save_as_video(frames: List[bytes], width: int, height: int,
-                  output_path: Path, fps: int) -> None:
-    """Save frames as video using ffmpeg."""
+                  output_path: Path, fps: int, audio_path: Optional[Path] = None) -> None:
+    """Save frames as video using ffmpeg, optionally with audio."""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         
@@ -658,11 +900,27 @@ def save_as_video(frames: List[bytes], width: int, height: int,
             "ffmpeg", "-y",
             "-framerate", str(fps),
             "-i", str(temp_path / "frame_%06d.png"),
+        ]
+        
+        # Add audio input if provided
+        if audio_path and audio_path.exists():
+            cmd.extend(["-i", str(audio_path)])
+        
+        cmd.extend([
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-crf", "18",
-            str(output_path)
-        ]
+        ])
+        
+        # Add audio codec if audio is included
+        if audio_path and audio_path.exists():
+            cmd.extend([
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-shortest",  # Match video length
+            ])
+        
+        cmd.append(str(output_path))
         
         try:
             subprocess.run(cmd, check=True, capture_output=True)
@@ -688,6 +946,8 @@ def main():
     parser.add_argument("--no-cursor", action="store_true", help="Hide cursor in video")
     parser.add_argument("--pattern", choices=["plain", "dotted", "graph", "ruled"],
                        default="plain", help="Background pattern (default: plain)")
+    parser.add_argument("--audio", action="store_true", 
+                       help="Generate audio (pen/eraser sounds synced with speed)")
     
     args = parser.parse_args()
     
@@ -704,7 +964,7 @@ def main():
         image_dir = args.input.parent / (args.input.stem + "_images")
     
     print(f"Generating frames from {args.input}...")
-    frames, width, height = generate_frames(
+    frames, width, height, first_event_time = generate_frames(
         recording, image_dir, args.width, args.height, args.fps,
         show_cursor=not args.no_cursor,
         bg_pattern=args.pattern
@@ -714,15 +974,46 @@ def main():
     
     output_ext = args.output.suffix.lower()
     
+    # Generate audio if requested
+    audio_path = None
+    if args.audio and output_ext in (".mp4", ".mkv", ".avi", ".mov"):
+        if AUDIO_AVAILABLE:
+            print("Generating audio track...")
+            events = recording.get("events", [])
+            duration_ms = recording.get("duration_ms", 1000)
+            
+            # Calculate actual duration used in video
+            if events:
+                last_event_time = events[-1].get("timestamp", duration_ms) + 500
+            else:
+                last_event_time = duration_ms
+            adjusted_duration = last_event_time - first_event_time
+            
+            audio_data = create_audio_track(events, adjusted_duration, first_event_time)
+            if audio_data:
+                audio_path = args.input.parent / (args.input.stem + "_audio.wav")
+                save_audio_wav(audio_data, audio_path)
+                print(f"Audio saved to {audio_path}")
+        else:
+            print("Warning: numpy not installed, audio generation disabled")
+            print("Install with: pip install numpy")
+    
     if output_ext == ".gif":
         print(f"Saving as GIF: {args.output}")
         save_as_gif(frames, width, height, args.output, args.fps)
     elif output_ext in (".mp4", ".mkv", ".avi", ".mov"):
         print(f"Saving as video: {args.output}")
-        save_as_video(frames, width, height, args.output, args.fps)
+        save_as_video(frames, width, height, args.output, args.fps, audio_path)
     else:
         print(f"Error: Unsupported output format: {output_ext}")
         sys.exit(1)
+    
+    # Clean up temporary audio file
+    if audio_path and audio_path.exists():
+        try:
+            os.remove(audio_path)
+        except:
+            pass
     
     print("Done!")
 
