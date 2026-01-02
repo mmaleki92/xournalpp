@@ -2298,6 +2298,14 @@ void Control::clipboardPaste(ElementPtr e) {
     e->setX(x);
     e->setY(y);
 
+    // Record image paste for stroke recording
+    if (e->getType() == ELEMENT_IMAGE && strokeRecorder && strokeRecorder->isRecording()) {
+        const Image* img = dynamic_cast<const Image*>(e.get());
+        if (img) {
+            strokeRecorder->recordImageAdd(img, pageNr);
+        }
+    }
+
     undoRedo->addUndoAction(std::make_unique<InsertUndoAction>(page, layer, e.get()));
     auto sel = SelectionFactory::createFromFloatingElement(this, page, layer, view, std::move(e));
 

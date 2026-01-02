@@ -101,6 +101,7 @@ struct RecordedImage {
     double width;
     double height;
     int64_t addedTimestamp;
+    std::vector<uint8_t> imageData;  // Raw image data (PNG)
 };
 
 /**

@@ -240,7 +240,7 @@ void StrokeRecorder::recordImageAdd(const Image* image, size_t pageNumber) {
     events.push_back(event);
     lastEventTime = event.timestamp;
 
-    // Store image info
+    // Store image info with raw data
     RecordedImage recordedImage;
     recordedImage.id = imageId;
     recordedImage.filename = imageId + ".png";
@@ -249,8 +249,15 @@ void StrokeRecorder::recordImageAdd(const Image* image, size_t pageNumber) {
     recordedImage.width = image->getElementWidth();
     recordedImage.height = image->getElementHeight();
     recordedImage.addedTimestamp = event.timestamp;
+    
+    // Copy raw image data for later export
+    if (image->hasData()) {
+        const uint8_t* data = image->getRawData();
+        size_t len = image->getRawDataLength();
+        recordedImage.imageData.assign(data, data + len);
+    }
 
-    images.push_back(recordedImage);
+    images.push_back(std::move(recordedImage));
 }
 
 void StrokeRecorder::recordImageMove(const std::string& imageId, double newX, double newY) {
@@ -414,12 +421,28 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
     // Allow empty recordings - they will just have no events
     // This is not an error condition
 
-    // Create image directory if it doesn't exist
-    if (!fs::exists(imageDir)) {
+    // Create image directory if it doesn't exist and we have images to save
+    if (!images.empty() && !fs::exists(imageDir)) {
         try {
             fs::create_directories(imageDir);
         } catch (...) {
             return false;
+        }
+    }
+    
+    // Save all recorded images to disk
+    for (const auto& img: images) {
+        if (!img.imageData.empty()) {
+            fs::path imagePath = imageDir / img.filename;
+            try {
+                std::ofstream imgFile(imagePath, std::ios::binary);
+                if (imgFile.is_open()) {
+                    imgFile.write(reinterpret_cast<const char*>(img.imageData.data()), 
+                                  static_cast<std::streamsize>(img.imageData.size()));
+                }
+            } catch (...) {
+                // Continue even if image save fails
+            }
         }
     }
 

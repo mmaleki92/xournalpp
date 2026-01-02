@@ -365,11 +365,10 @@ def draw_stroke(ctx: cairo.Context, stroke: dict, progress: float = 1.0) -> None
     points = points[:num_points]
     
     color = parse_color(stroke.get("color", "0"))
-    width = stroke.get("width", 1.0)
+    base_width = stroke.get("width", 1.0)
     is_highlighter = stroke.get("is_highlighter", False)
     fill = stroke.get("fill", -1)
     
-    ctx.set_line_width(width)
     ctx.set_line_cap(cairo.LINE_CAP_ROUND)
     ctx.set_line_join(cairo.LINE_JOIN_ROUND)
     
@@ -379,28 +378,40 @@ def draw_stroke(ctx: cairo.Context, stroke: dict, progress: float = 1.0) -> None
     else:
         ctx.set_source_rgba(*color)
     
-    # Draw the stroke
-    ctx.move_to(points[0]["x"], points[0]["y"])
-    for point in points[1:]:
-        ctx.line_to(point["x"], point["y"])
+    # Check if stroke has variable width (pressure data in 'z' field)
+    # In Xournal++, z=-1 means no pressure data, z>0 is pressure
+    has_pressure = any(p.get("z", -1) > 0 for p in points)
     
-    # Handle variable width strokes
-    if any(p.get("z", -1) > 0 for p in points):
-        # Variable width stroke - draw with varying line widths
-        ctx.stroke()
+    if has_pressure:
+        # Variable width stroke - draw segment by segment with varying line widths
         for i in range(len(points) - 1):
             p1 = points[i]
             p2 = points[i + 1]
             
-            w1 = p1.get("z", width)
-            w2 = p2.get("z", width)
-            avg_width = (w1 + w2) / 2 if w1 > 0 and w2 > 0 else width
+            # z is pressure, use it to scale width
+            # Pressure typically ranges from 0 to 1, but can vary
+            z1 = p1.get("z", -1)
+            z2 = p2.get("z", -1)
             
-            ctx.set_line_width(avg_width)
+            if z1 > 0 and z2 > 0:
+                # Pressure is stored, scale width by pressure
+                # Average pressure for segment
+                avg_pressure = (z1 + z2) / 2
+                # Scale width: pressure is usually 0-1 range, multiply base_width
+                segment_width = max(0.5, base_width * avg_pressure)
+            else:
+                segment_width = base_width
+            
+            ctx.set_line_width(segment_width)
             ctx.move_to(p1["x"], p1["y"])
             ctx.line_to(p2["x"], p2["y"])
             ctx.stroke()
     else:
+        # Fixed width stroke - draw as single path
+        ctx.set_line_width(base_width)
+        ctx.move_to(points[0]["x"], points[0]["y"])
+        for point in points[1:]:
+            ctx.line_to(point["x"], point["y"])
         ctx.stroke()
     
     # Handle fill
@@ -640,17 +651,24 @@ def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen"
 
 
 def generate_frames(recording: dict, image_dir: Path, 
-                   width: int, height: int, fps: int,
+                   width: Optional[int], height: Optional[int], fps: int,
                    show_cursor: bool = True,
-                   bg_pattern: str = "plain") -> Tuple[List[bytes], int, int, int]:
+                   bg_pattern: str = "plain",
+                   scale_factor: float = 1.0) -> Tuple[List[bytes], int, int, int]:
     """Generate frames from the recording. Returns (frames, width, height, first_event_time)."""
     frames = []
     
     duration_ms = recording.get("duration_ms", 1000)
     
-    # Get page dimensions for scaling
-    page_width = recording.get("page_width", 595.0)
-    page_height = recording.get("page_height", 842.0)
+    # Get page dimensions from recording
+    page_width = recording.get("page_width", 595.0)  # Default A4 width in points
+    page_height = recording.get("page_height", 842.0)  # Default A4 height in points
+    
+    # If width/height not specified, use page dimensions directly (scaled)
+    if width is None or height is None:
+        # Use page size with scale factor (default 2x for HD quality)
+        width = int(page_width * scale_factor)
+        height = int(page_height * scale_factor)
     
     # Calculate scaling to fit the output dimensions while preserving aspect ratio
     scale_x = width / page_width
@@ -939,8 +957,12 @@ def main():
     parser.add_argument("input", type=Path, help="Input JSON recording file")
     parser.add_argument("output", type=Path, help="Output video/GIF file")
     parser.add_argument("--fps", type=int, default=30, help="Frames per second (default: 30)")
-    parser.add_argument("--width", type=int, default=1920, help="Output width (default: 1920)")
-    parser.add_argument("--height", type=int, default=1080, help="Output height (default: 1080)")
+    parser.add_argument("--width", type=int, default=None, 
+                       help="Output width (default: auto from page size)")
+    parser.add_argument("--height", type=int, default=None, 
+                       help="Output height (default: auto from page size)")
+    parser.add_argument("--scale", type=float, default=2.0,
+                       help="Scale factor for output (default: 2.0 for HD quality)")
     parser.add_argument("--image-dir", type=Path, default=None,
                        help="Directory containing images (default: <input>_images)")
     parser.add_argument("--no-cursor", action="store_true", help="Hide cursor in video")
@@ -967,7 +989,8 @@ def main():
     frames, width, height, first_event_time = generate_frames(
         recording, image_dir, args.width, args.height, args.fps,
         show_cursor=not args.no_cursor,
-        bg_pattern=args.pattern
+        bg_pattern=args.pattern,
+        scale_factor=args.scale
     )
     
     print(f"Generated {len(frames)} frames")
