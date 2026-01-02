@@ -18,6 +18,7 @@ Requirements:
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -63,6 +64,52 @@ def parse_color(color_str: str) -> Tuple[float, float, float, float]:
         a = 1.0
     
     return (r, g, b, a)
+
+
+def is_background_dark(color: Tuple[float, float, float, float]) -> bool:
+    """Check if background color is dark to adjust contrast."""
+    r, g, b, _ = color
+    # Calculate luminance (standard formula)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return lum < 0.5
+
+
+def draw_background_pattern(ctx: cairo.Context, width: int, height: int, 
+                           bg_color: Tuple[float, float, float, float],
+                           pattern_type: str = "plain") -> None:
+    """Draw background with optional pattern (dotted, graph, ruled)."""
+    is_dark = is_background_dark(bg_color)
+    
+    # Set pattern color based on background brightness
+    if is_dark:
+        ctx.set_source_rgba(0.8, 0.8, 0.9, 0.4)  # Light for dark backgrounds
+    else:
+        ctx.set_source_rgba(0.4, 0.4, 0.5, 0.4)  # Dark for light backgrounds
+    
+    spacing = 24  # Standard spacing
+    
+    if pattern_type == "dotted":
+        for y in range(0, height, spacing):
+            for x in range(0, width, spacing):
+                ctx.arc(x, y, 1.0, 0, 2 * math.pi)
+                ctx.fill()
+                
+    elif pattern_type == "graph":
+        ctx.set_line_width(0.5)
+        for x in range(0, width, spacing):
+            ctx.move_to(x, 0)
+            ctx.line_to(x, height)
+        for y in range(0, height, spacing):
+            ctx.move_to(0, y)
+            ctx.line_to(width, y)
+        ctx.stroke()
+        
+    elif pattern_type == "ruled":
+        ctx.set_line_width(0.5)
+        for y in range(spacing, height, spacing):
+            ctx.move_to(0, y)
+            ctx.line_to(width, y)
+        ctx.stroke()
 
 
 def draw_stroke(ctx: cairo.Context, stroke: dict, progress: float = 1.0) -> None:
@@ -161,37 +208,206 @@ def draw_image(ctx: cairo.Context, image_info: dict, image_dir: Path) -> None:
         print(f"Warning: Could not load image {filename}: {e}")
 
 
-def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen", eraser_size: float = 10) -> None:
-    """Draw a cursor at the given position."""
+def draw_realistic_pencil(ctx: cairo.Context, x: float, y: float, 
+                          tip_color: Tuple[float, float, float, float],
+                          scale: float = 1.0, is_dark_bg: bool = False) -> None:
+    """Draw a realistic pencil cursor with shadow."""
     ctx.save()
     ctx.translate(x, y)
     
-    if cursor_type == "eraser":
-        # Draw eraser cursor (circle) with actual eraser size
-        ctx.set_source_rgba(0.8, 0.2, 0.2, 0.5)
-        ctx.arc(0, 0, eraser_size, 0, 2 * 3.14159)
-        ctx.fill()
-        ctx.set_source_rgba(1, 1, 1, 0.3)
-        ctx.arc(0, 0, eraser_size * 0.8, 0, 2 * 3.14159)
-        ctx.fill()
+    main_angle_deg = 135
+    s = scale * 0.4  # Smaller scale for cursor
+    ctx.scale(s, s)
+    
+    width = 14
+    half_w = width / 2
+    length = 100
+    cone_h = 25
+    lead_h = 8
+    
+    # Draw shadow
+    ctx.save()
+    ctx.rotate(math.radians(main_angle_deg - 3))
+    shadow_len = length * 0.25
+    
+    grad_shadow = cairo.LinearGradient(0, 0, 0, -shadow_len)
+    if is_dark_bg:
+        grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.9)
+        grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
     else:
-        # Draw pen cursor (small dot)
-        ctx.set_source_rgba(0.2, 0.2, 0.8, 0.9)
-        ctx.arc(0, 0, 3, 0, 2 * 3.14159)
-        ctx.fill()
+        grad_shadow.add_color_stop_rgba(0.0, 0, 0, 0, 0.5)
+        grad_shadow.add_color_stop_rgba(1.0, 0, 0, 0, 0.0)
+    
+    ctx.set_source(grad_shadow)
+    ctx.move_to(0, 0)
+    ctx.line_to(half_w * 0.35, -lead_h)
+    ctx.line_to(half_w, -cone_h)
+    ctx.line_to(half_w, -shadow_len)
+    ctx.line_to(-half_w, -shadow_len)
+    ctx.line_to(-half_w, -cone_h)
+    ctx.line_to(-half_w * 0.35, -lead_h)
+    ctx.close_path()
+    ctx.fill()
+    ctx.restore()
+    
+    # Draw pencil body
+    ctx.rotate(math.radians(main_angle_deg))
+    
+    # Lead tip
+    blunt_w = 1.5
+    ctx.move_to(-blunt_w/2, 0)
+    ctx.line_to(blunt_w/2, 0)
+    ctx.line_to(half_w * 0.35, -lead_h)
+    ctx.line_to(-half_w * 0.35, -lead_h)
+    ctx.close_path()
+    ctx.set_source_rgb(0.15, 0.15, 0.18)
+    ctx.fill()
+    
+    # Wood cone
+    ctx.move_to(-half_w * 0.35, -lead_h)
+    ctx.line_to(half_w * 0.35, -lead_h)
+    ctx.line_to(half_w, -cone_h)
+    ctx.line_to(-half_w, -cone_h)
+    ctx.close_path()
+    
+    pat_wood = cairo.LinearGradient(0, -lead_h, 0, -cone_h)
+    pat_wood.add_color_stop_rgb(0.0, 0.85, 0.70, 0.55)
+    pat_wood.add_color_stop_rgb(0.3, 0.95, 0.85, 0.70)
+    pat_wood.add_color_stop_rgb(1.0, 0.90, 0.80, 0.65)
+    ctx.set_source(pat_wood)
+    ctx.fill()
+    
+    # Pencil body (colored part)
+    face_w = width / 3.0
+    
+    # Left face
+    ctx.move_to(-half_w, -cone_h)
+    ctx.line_to(-half_w + face_w, -cone_h)
+    ctx.line_to(-half_w + face_w, -length)
+    ctx.line_to(-half_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(tip_color[0] * 0.6, tip_color[1] * 0.6, tip_color[2] * 0.6)
+    ctx.fill()
+    
+    # Center face
+    ctx.move_to(-half_w + face_w, -cone_h)
+    ctx.line_to(half_w - face_w, -cone_h)
+    ctx.line_to(half_w - face_w, -length)
+    ctx.line_to(-half_w + face_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(tip_color[0], tip_color[1], tip_color[2])
+    ctx.fill()
+    
+    # Right face
+    ctx.move_to(half_w - face_w, -cone_h)
+    ctx.line_to(half_w, -cone_h)
+    ctx.line_to(half_w, -length)
+    ctx.line_to(half_w - face_w, -length)
+    ctx.close_path()
+    ctx.set_source_rgb(tip_color[0] * 0.8, tip_color[1] * 0.8, tip_color[2] * 0.8)
+    ctx.fill()
     
     ctx.restore()
 
 
+def draw_realistic_eraser(ctx: cairo.Context, x: float, y: float,
+                          eraser_size: float = 10, scale: float = 1.0,
+                          is_dark_bg: bool = False) -> None:
+    """Draw a realistic block eraser cursor with shadow."""
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate(math.radians(-15))
+    s = scale * 0.3
+    ctx.scale(s, s)
+    ctx.translate(-20, -45)
+    
+    w = 40
+    h = 60
+    depth = 15
+    
+    # Draw shadow
+    ctx.save()
+    ctx.translate(6, 6)
+    if is_dark_bg:
+        ctx.set_source_rgba(0, 0, 0, 0.7)
+    else:
+        ctx.set_source_rgba(0, 0, 0, 0.2)
+    ctx.move_to(0, h)
+    ctx.line_to(w, h)
+    ctx.line_to(w + depth, h - 5)
+    ctx.line_to(w + depth, -5)
+    ctx.line_to(depth, -5)
+    ctx.line_to(0, 0)
+    ctx.close_path()
+    ctx.fill()
+    ctx.restore()
+    
+    # Main body
+    ctx.rectangle(0, 0, w, h)
+    pat = cairo.LinearGradient(0, 0, w, h)
+    pat.add_color_stop_rgb(0, 0.95, 0.95, 0.95)
+    pat.add_color_stop_rgb(1, 0.85, 0.85, 0.85)
+    ctx.set_source(pat)
+    ctx.fill()
+    
+    # Right side
+    ctx.move_to(w, 0)
+    ctx.line_to(w + depth, -5)
+    ctx.line_to(w + depth, h - 5)
+    ctx.line_to(w, h)
+    ctx.close_path()
+    ctx.set_source_rgb(0.8, 0.8, 0.8)
+    ctx.fill()
+    
+    # Top side
+    ctx.move_to(0, 0)
+    ctx.line_to(depth, -5)
+    ctx.line_to(w + depth, -5)
+    ctx.line_to(w, 0)
+    ctx.close_path()
+    ctx.set_source_rgb(0.9, 0.9, 0.9)
+    ctx.fill()
+    
+    # Blue sleeve
+    sleeve_h = h * 0.5
+    sleeve_y = h * 0.3
+    ctx.rectangle(0, sleeve_y, w, sleeve_h)
+    ctx.set_source_rgb(0.2, 0.3, 0.8)
+    ctx.fill()
+    
+    # Sleeve side
+    ctx.move_to(w, sleeve_y)
+    ctx.line_to(w + depth, sleeve_y - 2)
+    ctx.line_to(w + depth, sleeve_y + sleeve_h - 2)
+    ctx.line_to(w, sleeve_y + sleeve_h)
+    ctx.close_path()
+    ctx.set_source_rgb(0.15, 0.25, 0.6)
+    ctx.fill()
+    
+    ctx.restore()
+
+
+def draw_cursor(ctx: cairo.Context, x: float, y: float, cursor_type: str = "pen",
+                eraser_size: float = 10, stroke_color: Tuple[float, float, float, float] = (0, 0, 0, 1),
+                is_dark_bg: bool = False) -> None:
+    """Draw a cursor at the given position."""
+    if cursor_type == "eraser":
+        draw_realistic_eraser(ctx, x, y, eraser_size, 1.0, is_dark_bg)
+    else:
+        draw_realistic_pencil(ctx, x, y, stroke_color, 1.0, is_dark_bg)
+
+
 def generate_frames(recording: dict, image_dir: Path, 
-                   width: int, height: int, fps: int) -> Tuple[List[bytes], int, int]:
+                   width: int, height: int, fps: int,
+                   show_cursor: bool = True,
+                   bg_pattern: str = "plain") -> Tuple[List[bytes], int, int]:
     """Generate frames from the recording."""
     frames = []
     
     duration_ms = recording.get("duration_ms", 1000)
     
     # Get page dimensions for scaling
-    page_width = recording.get("page_width", 595.0)  # Default A4
+    page_width = recording.get("page_width", 595.0)
     page_height = recording.get("page_height", 842.0)
     
     # Calculate scaling to fit the output dimensions while preserving aspect ratio
@@ -208,33 +424,36 @@ def generate_frames(recording: dict, image_dir: Path,
     images = recording.get("images", [])
     events = recording.get("events", [])
     
-    # Find the first event timestamp to skip initial idle time
+    # Find the first and last event timestamps
     first_event_time = 0
+    last_event_time = duration_ms
     if events:
-        first_event_time = max(0, events[0].get("timestamp", 0) - 500)  # Start 500ms before first event
+        first_event_time = max(0, events[0].get("timestamp", 0) - 500)
+        last_event_time = events[-1].get("timestamp", duration_ms) + 500  # Add 500ms after last event
     
-    # Adjust duration
-    adjusted_duration = duration_ms - first_event_time
+    # Adjust duration to include all events
+    adjusted_duration = last_event_time - first_event_time
     total_frames = max(1, int(adjusted_duration * fps / 1000))
     
     # Create stroke lookup by ID
     stroke_by_id = {s["id"]: s for s in strokes}
     
-    # Track active strokes and their progress
-    active_strokes = {}  # stroke_id -> progress (0-1)
+    # Track state
+    active_strokes = {}
     completed_strokes = set()
-    erased_strokes = set()  # Track fully erased strokes
-    visible_images = {}  # image_id -> image_info
+    erased_strokes = set()
+    visible_images = {}
     
     current_cursor_pos = None
     current_cursor_type = "pen"
     current_eraser_size = 10
+    current_stroke_color = (0.0, 0.0, 0.0, 1.0)
     
-    # Process events to build frame state
+    is_dark_bg = is_background_dark(bg_color)
+    
     event_index = 0
     
     for frame_num in range(total_frames):
-        # Adjust frame time to account for skipped initial idle time
         frame_time = first_event_time + int(frame_num * 1000 / fps)
         
         # Process events up to this frame time
@@ -246,6 +465,8 @@ def generate_frames(recording: dict, image_dir: Path,
                 stroke_id = event.get("stroke_id", -1)
                 if stroke_id in stroke_by_id:
                     active_strokes[stroke_id] = 0.0
+                    stroke = stroke_by_id[stroke_id]
+                    current_stroke_color = parse_color(stroke.get("color", "0"))
                 current_cursor_type = "pen"
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
                 
@@ -273,7 +494,6 @@ def generate_frames(recording: dict, image_dir: Path,
                 
             elif event_type == "erase_point":
                 current_cursor_pos = (event.get("x", 0), event.get("y", 0))
-                # Mark affected strokes as erased
                 affected = event.get("affected_strokes", [])
                 for stroke_id in affected:
                     erased_strokes.add(stroke_id)
@@ -297,13 +517,11 @@ def generate_frames(recording: dict, image_dir: Path,
                     visible_images[image_id]["y"] = event.get("y", 0)
                     
             elif event_type == "undo":
-                # Simple undo: remove last completed stroke or restore last erased
                 if completed_strokes:
                     last_stroke = max(completed_strokes)
                     completed_strokes.remove(last_stroke)
                     
             elif event_type == "redo":
-                # Simple redo: restore last removed stroke
                 pass
             
             event_index += 1
@@ -312,7 +530,7 @@ def generate_frames(recording: dict, image_dir: Path,
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         ctx = cairo.Context(surface)
         
-        # Draw background (fill entire frame)
+        # Draw background
         ctx.set_source_rgba(bg_color[0], bg_color[1], bg_color[2], 1.0)
         ctx.paint()
         
@@ -320,6 +538,9 @@ def generate_frames(recording: dict, image_dir: Path,
         ctx.save()
         ctx.translate(offset_x, offset_y)
         ctx.scale(scale, scale)
+        
+        # Draw background pattern
+        draw_background_pattern(ctx, int(page_width), int(page_height), bg_color, bg_pattern)
         
         # Draw images
         for img_info in visible_images.values():
@@ -336,9 +557,9 @@ def generate_frames(recording: dict, image_dir: Path,
                 draw_stroke(ctx, stroke_by_id[stroke_id], progress)
         
         # Draw cursor
-        if current_cursor_pos:
-            draw_cursor(ctx, current_cursor_pos[0], current_cursor_pos[1], 
-                       current_cursor_type, current_eraser_size)
+        if show_cursor and current_cursor_pos:
+            draw_cursor(ctx, current_cursor_pos[0], current_cursor_pos[1],
+                       current_cursor_type, current_eraser_size, current_stroke_color, is_dark_bg)
         
         ctx.restore()
         
@@ -354,7 +575,6 @@ def save_as_gif(frames: List[bytes], width: int, height: int,
     """Save frames as animated GIF."""
     pil_frames = []
     for frame_data in frames:
-        # Create PIL image from BGRA data
         img = Image.frombytes("RGBA", (width, height), frame_data, "raw", "BGRa")
         img = img.convert("P", palette=Image.ADAPTIVE, colors=256)
         pil_frames.append(img)
@@ -373,17 +593,14 @@ def save_as_gif(frames: List[bytes], width: int, height: int,
 def save_as_video(frames: List[bytes], width: int, height: int,
                   output_path: Path, fps: int) -> None:
     """Save frames as video using ffmpeg."""
-    # Create temporary directory for PNG frames
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         
-        # Save frames as PNG files
         for i, frame_data in enumerate(frames):
             img = Image.frombytes("RGBA", (width, height), frame_data, "raw", "BGRa")
             img = img.convert("RGB")
             img.save(temp_path / f"frame_{i:06d}.png")
         
-        # Use ffmpeg to create video
         cmd = [
             "ffmpeg", "-y",
             "-framerate", str(fps),
@@ -415,10 +632,12 @@ def main():
     parser.add_argument("--height", type=int, default=1080, help="Output height (default: 1080)")
     parser.add_argument("--image-dir", type=Path, default=None,
                        help="Directory containing images (default: <input>_images)")
+    parser.add_argument("--no-cursor", action="store_true", help="Hide cursor in video")
+    parser.add_argument("--pattern", choices=["plain", "dotted", "graph", "ruled"],
+                       default="plain", help="Background pattern (default: plain)")
     
     args = parser.parse_args()
     
-    # Load recording
     if not args.input.exists():
         print(f"Error: Input file not found: {args.input}")
         sys.exit(1)
@@ -426,7 +645,6 @@ def main():
     with open(args.input) as f:
         recording = json.load(f)
     
-    # Determine image directory
     if args.image_dir:
         image_dir = args.image_dir
     else:
@@ -434,12 +652,13 @@ def main():
     
     print(f"Generating frames from {args.input}...")
     frames, width, height = generate_frames(
-        recording, image_dir, args.width, args.height, args.fps
+        recording, image_dir, args.width, args.height, args.fps,
+        show_cursor=not args.no_cursor,
+        bg_pattern=args.pattern
     )
     
     print(f"Generated {len(frames)} frames")
     
-    # Determine output format
     output_ext = args.output.suffix.lower()
     
     if output_ext == ".gif":

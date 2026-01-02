@@ -20,6 +20,7 @@
 #include "control/AudioController.h"                // for AudioController
 #include "control/Control.h"                        // for Control
 #include "control/ScrollHandler.h"                  // for ScrollHandler
+#include "control/StrokeRecorder.h"                 // for StrokeRecorder
 #include "control/SearchControl.h"                  // for SearchControl
 #include "control/Tool.h"                           // for Tool
 #include "control/ToolEnums.h"                      // for DRAWING_TYPE_SPLINE
@@ -300,6 +301,12 @@ auto XojPageView::onButtonPressEvent(const PositionInputData& pos) -> bool {
     } else if (h->getToolType() == TOOL_ERASER) {
         this->eraser->erase(x, y);
         this->inEraser = true;
+        
+        // Record eraser start for stroke recording
+        if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+            double eraserSize = h->getThickness();
+            recorder->recordEraseStart(x, y, eraserSize, this->xournal->getControl()->getCurrentPageNo());
+        }
     } else if (h->getToolType() == TOOL_LASER_POINTER_PEN || h->getToolType() == TOOL_LASER_POINTER_HIGHLIGHTER) {
         if (!this->laserPointer) {
             this->laserPointer = std::make_unique<LaserPointerHandler>(this, control, getPage());
@@ -564,6 +571,11 @@ auto XojPageView::onMotionNotifyEvent(const PositionInputData& pos) -> bool {
         // used this event
     } else if (h->getToolType() == TOOL_ERASER && h->getEraserType() != ERASER_TYPE_WHITEOUT && this->inEraser) {
         this->eraser->erase(x, y);
+        
+        // Record eraser point for stroke recording
+        if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+            recorder->recordErasePoint(x, y, {});  // Empty vector as we don't have affected stroke IDs here
+        }
     }
 
     return false;
@@ -687,6 +699,11 @@ auto XojPageView::onButtonReleaseEvent(const PositionInputData& pos) -> bool {
         doc->lock();
         this->eraser->finalize();
         doc->unlock();
+        
+        // Record eraser end for stroke recording
+        if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+            recorder->recordEraseEnd();
+        }
     }
 
     if (this->verticalSpace) {
