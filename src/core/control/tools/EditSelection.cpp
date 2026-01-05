@@ -576,6 +576,16 @@ void EditSelection::mouseUp() {
         return;
     }
 
+    // Record image drag end if we were dragging an image
+    if (!this->currentDraggingImageId.empty()) {
+        Control* control = view->getXournal()->getControl();
+        StrokeRecorder* recorder = control->getStrokeRecorder();
+        if (recorder && recorder->isRecording()) {
+            auto rect = this->getRect();
+            recorder->recordImageDragEnd(this->currentDraggingImageId, rect.x, rect.y);
+        }
+        this->currentDraggingImageId.clear();
+    }
 
     PageRef page = this->view->getPage();
     Layer* layer = page->getSelectedLayer();
@@ -614,6 +624,28 @@ void EditSelection::mouseDown(CursorSelectionType type, double x, double y) {
     cairo_matrix_transform_point(&this->cmatrix, &x, &y);
     this->relMousePosRotX = x / zoom - this->snappedBounds.x;
     this->relMousePosRotY = y / zoom - this->snappedBounds.y;
+
+    // Record image drag start if moving an image
+    if (type == CURSOR_SELECTION_MOVE) {
+        Control* control = view->getXournal()->getControl();
+        StrokeRecorder* recorder = control->getStrokeRecorder();
+        if (recorder && recorder->isRecording()) {
+            for (const auto& e : contents->getElementsView()) {
+                if (e->getType() == ELEMENT_IMAGE) {
+                    // Find image ID
+                    std::string imageId = recorder->findImageIdAtPosition(
+                        this->contents->getOriginalX(), this->contents->getOriginalY());
+                    
+                    if (!imageId.empty()) {
+                        auto rect = this->getRect();
+                        recorder->recordImageDragStart(imageId, rect.x, rect.y);
+                        this->currentDraggingImageId = imageId;
+                    }
+                    break;  // Only handle first image in selection
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -658,6 +690,16 @@ void EditSelection::mouseMove(double mouseX, double mouseY, bool alt) {
         if (!this->edgePanInhibitNext) {
             moveSelection(p.x - cx, p.y - cy);
             this->setEdgePan(true);
+            
+            // Record image drag point if dragging an image
+            if (!this->currentDraggingImageId.empty()) {
+                Control* control = view->getXournal()->getControl();
+                StrokeRecorder* recorder = control->getStrokeRecorder();
+                if (recorder && recorder->isRecording()) {
+                    auto rect = this->getRect();
+                    recorder->recordImageDragPoint(this->currentDraggingImageId, rect.x, rect.y);
+                }
+            }
         } else {
             this->edgePanInhibitNext = false;
         }

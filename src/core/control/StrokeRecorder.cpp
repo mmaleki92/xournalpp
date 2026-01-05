@@ -294,6 +294,75 @@ void StrokeRecorder::recordImageMove(const std::string& imageId, double newX, do
     }
 }
 
+void StrokeRecorder::recordImageDragStart(const std::string& imageId, double x, double y) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_DRAG_START;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = currentPage;
+    event.imageId = imageId;
+    event.imageX = x;
+    event.imageY = y;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+}
+
+void StrokeRecorder::recordImageDragPoint(const std::string& imageId, double x, double y) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_DRAG_POINT;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = currentPage;
+    event.imageId = imageId;
+    event.imageX = x;
+    event.imageY = y;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+    
+    // Update the image position in our records
+    for (auto& img : images) {
+        if (img.id == imageId) {
+            img.x = x;
+            img.y = y;
+            break;
+        }
+    }
+}
+
+void StrokeRecorder::recordImageDragEnd(const std::string& imageId, double x, double y) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_DRAG_END;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = currentPage;
+    event.imageId = imageId;
+    event.imageX = x;
+    event.imageY = y;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+    
+    // Update the image position in our records
+    for (auto& img : images) {
+        if (img.id == imageId) {
+            img.x = x;
+            img.y = y;
+            break;
+        }
+    }
+}
+
 void StrokeRecorder::recordImageResize(const std::string& imageId, double newX, double newY, double newWidth, double newHeight) {
     if (!recording) {
         return;
@@ -709,6 +778,15 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
             case RecordEventType::IMAGE_MOVE:
                 file << "image_move";
                 break;
+            case RecordEventType::IMAGE_DRAG_START:
+                file << "image_drag_start";
+                break;
+            case RecordEventType::IMAGE_DRAG_POINT:
+                file << "image_drag_point";
+                break;
+            case RecordEventType::IMAGE_DRAG_END:
+                file << "image_drag_end";
+                break;
             case RecordEventType::IMAGE_RESIZE:
                 file << "image_resize";
                 break;
@@ -769,6 +847,8 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
                 file << "]";
             }
         } else if (e.type == RecordEventType::IMAGE_ADD || e.type == RecordEventType::IMAGE_MOVE ||
+                   e.type == RecordEventType::IMAGE_DRAG_START || e.type == RecordEventType::IMAGE_DRAG_POINT ||
+                   e.type == RecordEventType::IMAGE_DRAG_END ||
                    e.type == RecordEventType::IMAGE_RESIZE || e.type == RecordEventType::IMAGE_ROTATE ||
                    e.type == RecordEventType::IMAGE_COPY) {
             file << ",\n      \"image_id\": \"" << e.imageId << "\"";

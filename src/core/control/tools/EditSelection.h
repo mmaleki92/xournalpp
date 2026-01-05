@@ -467,4 +467,9 @@ private:  // HANDLER
      * the selection in mouseDown while edge panning.
      */
     bool edgePanInhibitNext = false;
+
+    /**
+     * Current image being dragged (for recording continuous movement)
+     */
+    std::string currentDraggingImageId;
 };

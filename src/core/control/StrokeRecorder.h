@@ -40,6 +40,9 @@ enum class RecordEventType {
     ERASE_END,
     IMAGE_ADD,
     IMAGE_MOVE,
+    IMAGE_DRAG_START,
+    IMAGE_DRAG_POINT,
+    IMAGE_DRAG_END,
     IMAGE_RESIZE,
     IMAGE_ROTATE,
     IMAGE_COPY,
@@ -175,6 +178,21 @@ public:
      * @brief Record image movement
      */
     void recordImageMove(const std::string& imageId, double newX, double newY);
+
+    /**
+     * @brief Record start of image dragging
+     */
+    void recordImageDragStart(const std::string& imageId, double x, double y);
+
+    /**
+     * @brief Record intermediate point during image dragging
+     */
+    void recordImageDragPoint(const std::string& imageId, double x, double y);
+
+    /**
+     * @brief Record end of image dragging
+     */
+    void recordImageDragEnd(const std::string& imageId, double x, double y);
 
     /**
      * @brief Record image resize

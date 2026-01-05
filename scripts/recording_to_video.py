@@ -1027,6 +1027,21 @@ def generate_frames(recording: dict, image_dir: Path,
                     visible_images[image_id]["x"] = event.get("x", 0)
                     visible_images[image_id]["y"] = event.get("y", 0)
             
+            elif event_type in ("image_drag_start", "image_drag_point", "image_drag_end"):
+                image_id = event.get("image_id", "")
+                if image_id in visible_images:
+                    img_x = event.get("x", 0)
+                    img_y = event.get("y", 0)
+                    visible_images[image_id]["x"] = img_x
+                    visible_images[image_id]["y"] = img_y
+                    # Update cursor position while dragging (show cursor at image center)
+                    img_w = visible_images[image_id].get("width", 100)
+                    img_h = visible_images[image_id].get("height", 100)
+                    current_cursor_type = "pen"  # Use pen cursor for dragging
+                    current_cursor_pos = (img_x + img_w / 2, img_y + img_h / 2)
+                    if event_type == "image_drag_end":
+                        current_cursor_pos = None
+            
             elif event_type == "image_resize":
                 image_id = event.get("image_id", "")
                 if image_id in visible_images:
