@@ -634,7 +634,7 @@ def draw_stroke(ctx: cairo.Context, stroke: dict, progress: float = 1.0) -> None
 
 
 def draw_image(ctx: cairo.Context, image_info: dict, image_dir: Path) -> None:
-    """Draw an image on the Cairo context."""
+    """Draw an image on the Cairo context with support for transformations."""
     filename = image_info.get("filename", "")
     image_path = image_dir / filename
     
@@ -649,10 +649,13 @@ def draw_image(ctx: cairo.Context, image_info: dict, image_dir: Path) -> None:
         y = image_info.get("y", 0)
         width = image_info.get("width", img.width)
         height = image_info.get("height", img.height)
+        rotation = image_info.get("rotation", 0)  # Rotation in radians
         
         # Scale image if needed
-        if width != img.width or height != img.height:
-            img = img.resize((int(width), int(height)), Image.LANCZOS)
+        target_width = int(width)
+        target_height = int(height)
+        if target_width != img.width or target_height != img.height:
+            img = img.resize((target_width, target_height), Image.LANCZOS)
         
         # Convert PIL image to Cairo surface
         arr = bytearray(img.tobytes("raw", "BGRa"))
@@ -661,7 +664,18 @@ def draw_image(ctx: cairo.Context, image_info: dict, image_dir: Path) -> None:
         )
         
         ctx.save()
-        ctx.translate(x, y)
+        
+        # Apply transformations
+        if rotation != 0:
+            # Translate to center of image, rotate, then translate back
+            center_x = x + width / 2
+            center_y = y + height / 2
+            ctx.translate(center_x, center_y)
+            ctx.rotate(rotation)
+            ctx.translate(-width / 2, -height / 2)
+        else:
+            ctx.translate(x, y)
+        
         ctx.set_source_surface(surface, 0, 0)
         ctx.paint()
         ctx.restore()
@@ -992,6 +1006,19 @@ def generate_frames(recording: dict, image_dir: Path,
                 for img in images:
                     if img.get("id") == image_id:
                         visible_images[image_id] = img.copy()
+                        visible_images[image_id]["z_order"] = event.get("z_order", 0)
+                        break
+            
+            elif event_type == "image_copy":
+                image_id = event.get("image_id", "")
+                for img in images:
+                    if img.get("id") == image_id:
+                        visible_images[image_id] = img.copy()
+                        visible_images[image_id]["x"] = event.get("x", 0)
+                        visible_images[image_id]["y"] = event.get("y", 0)
+                        visible_images[image_id]["width"] = event.get("width", img.get("width", 100))
+                        visible_images[image_id]["height"] = event.get("height", img.get("height", 100))
+                        visible_images[image_id]["z_order"] = event.get("z_order", 0)
                         break
                         
             elif event_type == "image_move":
@@ -999,6 +1026,25 @@ def generate_frames(recording: dict, image_dir: Path,
                 if image_id in visible_images:
                     visible_images[image_id]["x"] = event.get("x", 0)
                     visible_images[image_id]["y"] = event.get("y", 0)
+            
+            elif event_type == "image_resize":
+                image_id = event.get("image_id", "")
+                if image_id in visible_images:
+                    visible_images[image_id]["x"] = event.get("x", 0)
+                    visible_images[image_id]["y"] = event.get("y", 0)
+                    visible_images[image_id]["width"] = event.get("width", visible_images[image_id].get("width", 100))
+                    visible_images[image_id]["height"] = event.get("height", visible_images[image_id].get("height", 100))
+            
+            elif event_type == "image_rotate":
+                image_id = event.get("image_id", "")
+                if image_id in visible_images:
+                    visible_images[image_id]["rotation"] = event.get("rotation", 0)
+            
+            elif event_type == "element_z_change":
+                element_id = event.get("element_id", "")
+                new_z = event.get("z_order", 0)
+                if element_id in visible_images:
+                    visible_images[element_id]["z_order"] = new_z
                     
             elif event_type == "undo":
                 if completed_strokes:
@@ -1036,19 +1082,38 @@ def generate_frames(recording: dict, image_dir: Path,
         stroke_ctx.translate(offset_x, offset_y)
         stroke_ctx.scale(scale, scale)
         
-        # Draw images on stroke layer
-        for img_info in visible_images.values():
-            draw_image(stroke_ctx, img_info, image_dir)
+        # Collect all elements (images and strokes) with their z-order
+        # so we can render them in the correct order
+        elements_to_draw = []
         
-        # Draw completed strokes (skip fully erased ones)
+        # Add images to draw list
+        for img_id, img_info in visible_images.items():
+            z = img_info.get("z_order", 0)
+            elements_to_draw.append(("image", z, img_info))
+        
+        # Add completed strokes to draw list
         for stroke_id in completed_strokes:
             if stroke_id in stroke_by_id and stroke_id not in erased_strokes:
-                draw_stroke(stroke_ctx, stroke_by_id[stroke_id], 1.0)
+                stroke = stroke_by_id[stroke_id]
+                z = stroke.get("z_order", 0)
+                elements_to_draw.append(("stroke", z, stroke, 1.0))
         
-        # Draw active strokes (in progress)
+        # Add active strokes to draw list
         for stroke_id, progress in active_strokes.items():
             if stroke_id in stroke_by_id:
-                draw_stroke(stroke_ctx, stroke_by_id[stroke_id], progress)
+                stroke = stroke_by_id[stroke_id]
+                z = stroke.get("z_order", 0)
+                elements_to_draw.append(("stroke", z, stroke, progress))
+        
+        # Sort by z-order (lower z-order draws first, appears behind)
+        elements_to_draw.sort(key=lambda x: x[1])
+        
+        # Draw all elements in z-order
+        for elem in elements_to_draw:
+            if elem[0] == "image":
+                draw_image(stroke_ctx, elem[2], image_dir)
+            elif elem[0] == "stroke":
+                draw_stroke(stroke_ctx, elem[2], elem[3])
         
         # Apply eraser mask to stroke surface
         # Use DEST_OUT to cut holes where eraser path is

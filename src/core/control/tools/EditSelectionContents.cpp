@@ -386,6 +386,10 @@ auto EditSelectionContents::getOriginalX() const -> double { return this->origin
 
 auto EditSelectionContents::getOriginalY() const -> double { return this->originalBounds.y; }
 
+auto EditSelectionContents::getOriginalWidth() const -> double { return this->originalBounds.width; }
+
+auto EditSelectionContents::getOriginalHeight() const -> double { return this->originalBounds.height; }
+
 auto EditSelectionContents::getOriginalBounds() const -> Rectangle<double> {
     return Rectangle<double>{this->originalBounds};
 }

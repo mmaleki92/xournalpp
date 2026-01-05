@@ -35,7 +35,8 @@ StrokeRecorder::StrokeRecorder(Control* control):
         nextImageId(1),
         currentStrokeId(-1),
         currentPage(0),
-        backgroundColor(Colors::white) {
+        backgroundColor(Colors::white),
+        nextZOrder(1) {
 
     // Register as undo/redo listener
     control->getUndoRedoHandler()->addUndoRedoListener(this);
@@ -55,6 +56,7 @@ void StrokeRecorder::startRecording() {
     nextStrokeId = 1;
     nextImageId = 1;
     currentStrokeId = -1;
+    nextZOrder = 1;
 
     // Record start time
     auto now = std::chrono::steady_clock::now();
@@ -113,6 +115,7 @@ void StrokeRecorder::recordStrokeStart(const Stroke* stroke, size_t pageNumber) 
     event.x = 0;
     event.y = 0;
     event.pressure = 0;
+    event.zOrder = nextZOrder;
 
     events.push_back(event);
     lastEventTime = event.timestamp;
@@ -124,6 +127,7 @@ void StrokeRecorder::recordStrokeStart(const Stroke* stroke, size_t pageNumber) 
     recordedStroke.width = stroke->getWidth();
     recordedStroke.isHighlighter = (stroke->getToolType() == StrokeTool::HIGHLIGHTER);
     recordedStroke.fill = stroke->getFill();
+    recordedStroke.zOrder = nextZOrder++;
 
     strokes.push_back(recordedStroke);
 }
@@ -236,6 +240,8 @@ void StrokeRecorder::recordImageAdd(const Image* image, size_t pageNumber) {
     event.imageY = image->getY();
     event.imageWidth = image->getElementWidth();
     event.imageHeight = image->getElementHeight();
+    event.imageRotation = 0.0;  // Initial rotation is 0
+    event.zOrder = nextZOrder;
 
     events.push_back(event);
     lastEventTime = event.timestamp;
@@ -248,7 +254,9 @@ void StrokeRecorder::recordImageAdd(const Image* image, size_t pageNumber) {
     recordedImage.y = image->getY();
     recordedImage.width = image->getElementWidth();
     recordedImage.height = image->getElementHeight();
+    recordedImage.rotation = 0.0;
     recordedImage.addedTimestamp = event.timestamp;
+    recordedImage.zOrder = nextZOrder++;
     
     // Copy raw image data for later export
     if (image->hasData()) {
@@ -275,6 +283,151 @@ void StrokeRecorder::recordImageMove(const std::string& imageId, double newX, do
 
     events.push_back(event);
     lastEventTime = event.timestamp;
+    
+    // Update the image position in our records
+    for (auto& img : images) {
+        if (img.id == imageId) {
+            img.x = newX;
+            img.y = newY;
+            break;
+        }
+    }
+}
+
+void StrokeRecorder::recordImageResize(const std::string& imageId, double newX, double newY, double newWidth, double newHeight) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_RESIZE;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = currentPage;
+    event.imageId = imageId;
+    event.imageX = newX;
+    event.imageY = newY;
+    event.imageWidth = newWidth;
+    event.imageHeight = newHeight;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+    
+    // Update the image size in our records
+    for (auto& img : images) {
+        if (img.id == imageId) {
+            img.x = newX;
+            img.y = newY;
+            img.width = newWidth;
+            img.height = newHeight;
+            break;
+        }
+    }
+}
+
+void StrokeRecorder::recordImageRotate(const std::string& imageId, double rotation) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_ROTATE;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = currentPage;
+    event.imageId = imageId;
+    event.imageRotation = rotation;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+    
+    // Update the image rotation in our records
+    for (auto& img : images) {
+        if (img.id == imageId) {
+            img.rotation = rotation;
+            break;
+        }
+    }
+}
+
+void StrokeRecorder::recordImageCopy(const Image* image, const std::string& sourceImageId, size_t pageNumber) {
+    if (!recording || !image) {
+        return;
+    }
+
+    std::string newImageId = generateImageId();
+
+    RecordEvent event;
+    event.type = RecordEventType::IMAGE_COPY;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = pageNumber;
+    event.imageId = newImageId;
+    event.imageX = image->getX();
+    event.imageY = image->getY();
+    event.imageWidth = image->getElementWidth();
+    event.imageHeight = image->getElementHeight();
+    event.imageRotation = 0.0;
+    event.zOrder = nextZOrder;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+
+    // Find source image and copy its data
+    RecordedImage recordedImage;
+    recordedImage.id = newImageId;
+    recordedImage.filename = newImageId + ".png";
+    recordedImage.x = image->getX();
+    recordedImage.y = image->getY();
+    recordedImage.width = image->getElementWidth();
+    recordedImage.height = image->getElementHeight();
+    recordedImage.rotation = 0.0;
+    recordedImage.addedTimestamp = event.timestamp;
+    recordedImage.zOrder = nextZOrder++;
+    
+    // Copy from source image or from the Image object
+    bool foundSource = false;
+    for (const auto& srcImg : images) {
+        if (srcImg.id == sourceImageId) {
+            recordedImage.imageData = srcImg.imageData;
+            foundSource = true;
+            break;
+        }
+    }
+    
+    // If source not found, copy from the Image object directly
+    if (!foundSource && image->hasData()) {
+        const uint8_t* data = image->getRawData();
+        size_t len = image->getRawDataLength();
+        recordedImage.imageData.assign(data, data + len);
+    }
+
+    images.push_back(std::move(recordedImage));
+}
+
+void StrokeRecorder::recordZOrderChange(const std::string& elementId, int newZOrder, size_t pageNumber) {
+    if (!recording) {
+        return;
+    }
+
+    RecordEvent event;
+    event.type = RecordEventType::ELEMENT_Z_CHANGE;
+    event.timestamp = getCurrentTimestamp();
+    event.pageNumber = pageNumber;
+    event.imageId = elementId;
+    event.zOrder = newZOrder;
+
+    events.push_back(event);
+    lastEventTime = event.timestamp;
+}
+
+std::string StrokeRecorder::findImageIdAtPosition(double x, double y, double tolerance) const {
+    // Search from most recent to oldest (higher z-order first)
+    for (auto it = images.rbegin(); it != images.rend(); ++it) {
+        const auto& img = *it;
+        if (x >= img.x - tolerance && x <= img.x + img.width + tolerance &&
+            y >= img.y - tolerance && y <= img.y + img.height + tolerance) {
+            return img.id;
+        }
+    }
+    return "";
 }
 
 void StrokeRecorder::recordBackgroundColorChange(Color color, size_t pageNumber) {
@@ -483,6 +636,7 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
         file << "      \"width\": " << s.width << ",\n";
         file << "      \"is_highlighter\": " << (s.isHighlighter ? "true" : "false") << ",\n";
         file << "      \"fill\": " << s.fill << ",\n";
+        file << "      \"z_order\": " << s.zOrder << ",\n";
         file << "      \"points\": [\n";
         for (size_t j = 0; j < s.points.size(); ++j) {
             const auto& p = s.points[j];
@@ -514,6 +668,8 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
         file << "      \"y\": " << img.y << ",\n";
         file << "      \"width\": " << img.width << ",\n";
         file << "      \"height\": " << img.height << ",\n";
+        file << "      \"rotation\": " << img.rotation << ",\n";
+        file << "      \"z_order\": " << img.zOrder << ",\n";
         file << "      \"timestamp\": " << img.addedTimestamp << "\n";
         file << "    }";
         if (i < images.size() - 1)
@@ -553,6 +709,18 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
             case RecordEventType::IMAGE_MOVE:
                 file << "image_move";
                 break;
+            case RecordEventType::IMAGE_RESIZE:
+                file << "image_resize";
+                break;
+            case RecordEventType::IMAGE_ROTATE:
+                file << "image_rotate";
+                break;
+            case RecordEventType::IMAGE_COPY:
+                file << "image_copy";
+                break;
+            case RecordEventType::ELEMENT_Z_CHANGE:
+                file << "element_z_change";
+                break;
             case RecordEventType::UNDO:
                 file << "undo";
                 break;
@@ -582,6 +750,7 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
             if (e.type == RecordEventType::STROKE_START) {
                 file << ",\n      \"color\": \"" << std::hex << std::setfill('0') << std::setw(8) << static_cast<uint32_t>(e.color) << std::dec << "\"";
                 file << ",\n      \"width\": " << e.width;
+                file << ",\n      \"z_order\": " << e.zOrder;
             }
         } else if (e.type == RecordEventType::ERASE_START || e.type == RecordEventType::ERASE_POINT ||
                    e.type == RecordEventType::ERASE_END) {
@@ -599,14 +768,26 @@ bool StrokeRecorder::exportToJson(const fs::path& filepath, const fs::path& imag
                 }
                 file << "]";
             }
-        } else if (e.type == RecordEventType::IMAGE_ADD || e.type == RecordEventType::IMAGE_MOVE) {
+        } else if (e.type == RecordEventType::IMAGE_ADD || e.type == RecordEventType::IMAGE_MOVE ||
+                   e.type == RecordEventType::IMAGE_RESIZE || e.type == RecordEventType::IMAGE_ROTATE ||
+                   e.type == RecordEventType::IMAGE_COPY) {
             file << ",\n      \"image_id\": \"" << e.imageId << "\"";
             file << ",\n      \"x\": " << e.imageX;
             file << ",\n      \"y\": " << e.imageY;
-            if (e.type == RecordEventType::IMAGE_ADD) {
+            if (e.type == RecordEventType::IMAGE_ADD || e.type == RecordEventType::IMAGE_RESIZE ||
+                e.type == RecordEventType::IMAGE_COPY) {
                 file << ",\n      \"width\": " << e.imageWidth;
                 file << ",\n      \"height\": " << e.imageHeight;
             }
+            if (e.type == RecordEventType::IMAGE_ROTATE) {
+                file << ",\n      \"rotation\": " << e.imageRotation;
+            }
+            if (e.type == RecordEventType::IMAGE_ADD || e.type == RecordEventType::IMAGE_COPY) {
+                file << ",\n      \"z_order\": " << e.zOrder;
+            }
+        } else if (e.type == RecordEventType::ELEMENT_Z_CHANGE) {
+            file << ",\n      \"element_id\": \"" << e.imageId << "\"";
+            file << ",\n      \"z_order\": " << e.zOrder;
         } else if (e.type == RecordEventType::BACKGROUND_COLOR_CHANGE) {
             file << ",\n      \"color\": \"" << std::hex << std::setfill('0') << std::setw(8) << static_cast<uint32_t>(e.backgroundColor) << std::dec
                  << "\"";

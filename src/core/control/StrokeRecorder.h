@@ -40,6 +40,10 @@ enum class RecordEventType {
     ERASE_END,
     IMAGE_ADD,
     IMAGE_MOVE,
+    IMAGE_RESIZE,
+    IMAGE_ROTATE,
+    IMAGE_COPY,
+    ELEMENT_Z_CHANGE,
     UNDO,
     REDO,
     PAGE_CHANGE,
@@ -72,6 +76,8 @@ struct RecordEvent {
     double imageY;
     double imageWidth;
     double imageHeight;
+    double imageRotation;  // Rotation angle in radians
+    int zOrder;            // Z-order for layering
 
     // Background color
     Color backgroundColor;
@@ -88,6 +94,7 @@ struct RecordedStroke {
     std::vector<int64_t> pointTimestamps;
     bool isHighlighter;
     int fill;  // Fill value (-1 for no fill)
+    int zOrder;  // Z-order for layering (order of creation)
 };
 
 /**
@@ -100,8 +107,10 @@ struct RecordedImage {
     double y;
     double width;
     double height;
+    double rotation;  // Rotation angle in radians
     int64_t addedTimestamp;
     std::vector<uint8_t> imageData;  // Raw image data (PNG)
+    int zOrder;  // Z-order for layering
 };
 
 /**
@@ -166,6 +175,31 @@ public:
      * @brief Record image movement
      */
     void recordImageMove(const std::string& imageId, double newX, double newY);
+
+    /**
+     * @brief Record image resize
+     */
+    void recordImageResize(const std::string& imageId, double newX, double newY, double newWidth, double newHeight);
+
+    /**
+     * @brief Record image rotation
+     */
+    void recordImageRotate(const std::string& imageId, double rotation);
+
+    /**
+     * @brief Record image copy (paste of existing image)
+     */
+    void recordImageCopy(const Image* image, const std::string& sourceImageId, size_t pageNumber);
+
+    /**
+     * @brief Record Z-order change for an element
+     */
+    void recordZOrderChange(const std::string& elementId, int newZOrder, size_t pageNumber);
+
+    /**
+     * @brief Find image ID by position (for tracking transformations)
+     */
+    std::string findImageIdAtPosition(double x, double y, double tolerance = 20.0) const;
 
     /**
      * @brief Record background color change
@@ -249,6 +283,8 @@ private:
     std::vector<RecordEvent> events;
     std::vector<RecordedStroke> strokes;
     std::vector<RecordedImage> images;
+    
+    int nextZOrder;  // Global Z-order counter for proper layering
 
     // Maximum idle time to keep in the recording (in ms)
     static constexpr int64_t MAX_IDLE_TIME_MS = 500;
