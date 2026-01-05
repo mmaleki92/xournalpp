@@ -173,6 +173,9 @@ enum class Action : size_t {
     // Miscellaneous
     POSITION_HIGHLIGHTING,
 
+    // Stroke Recording
+    STROKE_RECORDING,
+
     // Keep this last value
     ENUMERATOR_COUNT
 };

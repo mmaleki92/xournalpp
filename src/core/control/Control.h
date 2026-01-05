@@ -70,6 +70,7 @@ class XojFont;
 class XojPdfRectangle;
 class Callback;
 class ActionDatabase;
+class StrokeRecorder;
 
 class Control:
         public ToolListener,
@@ -318,6 +319,7 @@ public:
     LayerController* getLayerController() const;
     PluginController* getPluginController() const;
     const Palette& getPalette() const;
+    StrokeRecorder* getStrokeRecorder() const;
 
     /**
      * Show floating toolbox at specified coordinates
@@ -339,6 +341,12 @@ public:
      *
      */
     void initButtonTool();
+
+    /**
+     * @brief Toggle stroke recording on/off
+     * @param enable true to start recording, false to stop and export
+     */
+    void toggleStrokeRecording(bool enable);
 
 
 public:
@@ -559,6 +567,11 @@ private:
      * Manage all Xournal++ plugins
      */
     PluginController* pluginController;
+
+    /**
+     * Stroke recorder for video export
+     */
+    std::unique_ptr<StrokeRecorder> strokeRecorder;
 
     std::unique_ptr<ActionDatabase> actionDB;
     template <Action a>

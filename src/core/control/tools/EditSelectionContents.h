@@ -157,6 +157,16 @@ public:
     double getOriginalY() const;
 
     /**
+     * Gets the original width of the contents
+     */
+    double getOriginalWidth() const;
+
+    /**
+     * Gets the original height of the contents
+     */
+    double getOriginalHeight() const;
+
+    /**
      * Gets the complete original bounding box as rectangle
      */
     auto getOriginalBounds() const -> xoj::util::Rectangle<double>;

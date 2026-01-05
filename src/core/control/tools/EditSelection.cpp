@@ -13,6 +13,7 @@
 
 #include "control/Control.h"                       // for Control
 #include "control/settings/Settings.h"             // for Settings
+#include "control/StrokeRecorder.h"                // for StrokeRecorder
 #include "control/tools/CursorSelectionType.h"     // for CURSOR_SELECTION_NONE
 #include "control/tools/SnapToGridInputHandler.h"  // for SnapToGridInputHan...
 #include "control/zoom/ZoomControl.h"              // for ZoomControl
@@ -23,6 +24,7 @@
 #include "model/Document.h"                        // for Document
 #include "model/Element.h"                         // for Element::Index
 #include "model/ElementInsertionPosition.h"
+#include "model/Image.h"                          // for Image
 #include "model/Layer.h"                          // for Layer
 #include "model/LineStyle.h"                      // for LineStyle
 #include "model/Point.h"                          // for Point
@@ -285,6 +287,49 @@ void EditSelection::finalizeSelection() {
 
     this->view = v;
 
+    // Record image transformations before applying them
+    Control* control = view->getXournal()->getControl();
+    StrokeRecorder* recorder = control->getStrokeRecorder();
+    if (recorder && recorder->isRecording()) {
+        for (const auto& e : contents->getElementsView()) {
+            if (e->getType() == ELEMENT_IMAGE) {
+                const Image* img = static_cast<const Image*>(e);
+                // Find existing image ID if this is a transformation of a recorded image
+                std::string imageId = recorder->findImageIdAtPosition(
+                    this->contents->getOriginalX(), this->contents->getOriginalY());
+                
+                if (!imageId.empty()) {
+                    // Calculate new position and size
+                    auto rect = this->getRect();
+                    double newX = rect.x;
+                    double newY = rect.y;
+                    double newWidth = rect.width;
+                    double newHeight = rect.height;
+                    
+                    // Record appropriate transformation events
+                    if (this->rotation != 0) {
+                        recorder->recordImageRotate(imageId, this->rotation);
+                    }
+                    
+                    // Check if it was moved or resized
+                    double origX = this->contents->getOriginalX();
+                    double origY = this->contents->getOriginalY();
+                    double origWidth = this->contents->getOriginalWidth();
+                    double origHeight = this->contents->getOriginalHeight();
+                    
+                    bool moved = (std::abs(newX - origX) > 0.1 || std::abs(newY - origY) > 0.1);
+                    bool resized = (std::abs(newWidth - origWidth) > 0.1 || std::abs(newHeight - origHeight) > 0.1);
+                    
+                    if (resized) {
+                        recorder->recordImageResize(imageId, newX, newY, newWidth, newHeight);
+                    } else if (moved) {
+                        recorder->recordImageMove(imageId, newX, newY);
+                    }
+                }
+            }
+        }
+    }
+
     auto insertOrder =
             this->contents->makeMoveEffective(this->getRect(), this->snappedBounds, this->preserveAspectRatio);
 
@@ -531,6 +576,16 @@ void EditSelection::mouseUp() {
         return;
     }
 
+    // Record image drag end if we were dragging an image
+    if (!this->currentDraggingImageId.empty()) {
+        Control* control = view->getXournal()->getControl();
+        StrokeRecorder* recorder = control->getStrokeRecorder();
+        if (recorder && recorder->isRecording()) {
+            auto rect = this->getRect();
+            recorder->recordImageDragEnd(this->currentDraggingImageId, rect.x, rect.y);
+        }
+        this->currentDraggingImageId.clear();
+    }
 
     PageRef page = this->view->getPage();
     Layer* layer = page->getSelectedLayer();
@@ -569,6 +624,28 @@ void EditSelection::mouseDown(CursorSelectionType type, double x, double y) {
     cairo_matrix_transform_point(&this->cmatrix, &x, &y);
     this->relMousePosRotX = x / zoom - this->snappedBounds.x;
     this->relMousePosRotY = y / zoom - this->snappedBounds.y;
+
+    // Record image drag start if moving an image
+    if (type == CURSOR_SELECTION_MOVE) {
+        Control* control = view->getXournal()->getControl();
+        StrokeRecorder* recorder = control->getStrokeRecorder();
+        if (recorder && recorder->isRecording()) {
+            for (const auto& e : contents->getElementsView()) {
+                if (e->getType() == ELEMENT_IMAGE) {
+                    // Find image ID
+                    std::string imageId = recorder->findImageIdAtPosition(
+                        this->contents->getOriginalX(), this->contents->getOriginalY());
+                    
+                    if (!imageId.empty()) {
+                        auto rect = this->getRect();
+                        recorder->recordImageDragStart(imageId, rect.x, rect.y);
+                        this->currentDraggingImageId = imageId;
+                    }
+                    break;  // Only handle first image in selection
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -613,6 +690,16 @@ void EditSelection::mouseMove(double mouseX, double mouseY, bool alt) {
         if (!this->edgePanInhibitNext) {
             moveSelection(p.x - cx, p.y - cy);
             this->setEdgePan(true);
+            
+            // Record image drag point if dragging an image
+            if (!this->currentDraggingImageId.empty()) {
+                Control* control = view->getXournal()->getControl();
+                StrokeRecorder* recorder = control->getStrokeRecorder();
+                if (recorder && recorder->isRecording()) {
+                    auto rect = this->getRect();
+                    recorder->recordImageDragPoint(this->currentDraggingImageId, rect.x, rect.y);
+                }
+            }
         } else {
             this->edgePanInhibitNext = false;
         }
@@ -803,6 +890,24 @@ void EditSelection::copySelection() {
     clonedInsertionOrder.reserve(orig.size());
     for (const auto& [e, index]: orig) {
         clonedInsertionOrder.emplace_back(e->clone(), index);
+    }
+
+    // Record image copies before applying transformations
+    Control* control = view->getXournal()->getControl();
+    StrokeRecorder* recorder = control->getStrokeRecorder();
+    if (recorder && recorder->isRecording()) {
+        for (const auto& [e, index]: clonedInsertionOrder) {
+            if (e->getType() == ELEMENT_IMAGE) {
+                const Image* img = static_cast<const Image*>(e.get());
+                // Find source image ID
+                std::string sourceId = recorder->findImageIdAtPosition(
+                    this->contents->getOriginalX(), this->contents->getOriginalY());
+                
+                auto* doc = control->getDocument();
+                size_t pageNr = doc->indexOf(this->view->getPage());
+                recorder->recordImageCopy(img, sourceId, pageNr);
+            }
+        }
     }
 
     // apply transformations and add to layer

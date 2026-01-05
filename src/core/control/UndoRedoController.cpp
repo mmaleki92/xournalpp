@@ -4,6 +4,7 @@
 #include <cstddef>    // for size_t
 #include <iterator>   // for back_insert_iterator, back_...
 
+#include "control/StrokeRecorder.h"       // for StrokeRecorder
 #include "control/tools/EditSelection.h"  // for EditSelection
 #include "gui/MainWindow.h"               // for MainWindow
 #include "gui/XournalView.h"              // for XournalView
@@ -75,6 +76,11 @@ void UndoRedoController::undo(Control* control) {
 
     control->getUndoRedoHandler()->undo();
 
+    // Record undo event
+    if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+        recorder->recordUndo(control->getCurrentPageNo());
+    }
+
     handler.after();
 }
 
@@ -83,6 +89,11 @@ void UndoRedoController::redo(Control* control) {
     handler.before();
 
     control->getUndoRedoHandler()->redo();
+
+    // Record redo event
+    if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+        recorder->recordRedo(control->getCurrentPageNo());
+    }
 
     handler.after();
 }

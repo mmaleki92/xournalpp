@@ -114,6 +114,7 @@
 #include "LatexController.h"                 // for Late...
 #include "PageBackgroundChangeController.h"  // for Page...
 #include "PrintHandler.h"                    // for print
+#include "StrokeRecorder.h"                  // for StrokeRecorder
 #include "UndoRedoController.h"              // for Undo...
 #include "config-dev.h"                      // for SETT...
 #include "config.h"                          // for PROJ...
@@ -173,6 +174,8 @@ Control::Control(GApplication* gtkApp, GladeSearchpath* gladeSearchPath, bool di
 
     this->pluginController = new PluginController(this);
     this->pluginController->registerToolbar();
+
+    this->strokeRecorder = std::make_unique<StrokeRecorder>(this);
 }
 
 Control::~Control() {
@@ -2295,6 +2298,14 @@ void Control::clipboardPaste(ElementPtr e) {
     e->setX(x);
     e->setY(y);
 
+    // Record image paste for stroke recording
+    if (e->getType() == ELEMENT_IMAGE && strokeRecorder && strokeRecorder->isRecording()) {
+        const Image* img = dynamic_cast<const Image*>(e.get());
+        if (img) {
+            strokeRecorder->recordImageAdd(img, pageNr);
+        }
+    }
+
     undoRedo->addUndoAction(std::make_unique<InsertUndoAction>(page, layer, e.get()));
     auto sel = SelectionFactory::createFromFloatingElement(this, page, layer, view, std::move(e));
 
@@ -2589,5 +2600,52 @@ auto Control::loadPaletteFromSettings() -> void {
     } catch (const std::exception& e) {
         this->palette->parseErrorDialog(e);
         this->palette->load_default();
+    }
+}
+
+auto Control::getStrokeRecorder() const -> StrokeRecorder* { return strokeRecorder.get(); }
+
+void Control::toggleStrokeRecording(bool enable) {
+    if (enable) {
+        strokeRecorder->startRecording();
+        XojMsgBox::showMessageToUser(getGtkWindow(), _("Recording started"),
+                                     _("Stroke recording has started. All your drawing actions will be recorded."),
+                                     GTK_MESSAGE_INFO);
+    } else {
+        strokeRecorder->stopRecording();
+
+        // Show save dialog using GTK file chooser
+        GtkWidget* dialog = gtk_file_chooser_dialog_new(
+                _("Save Recording"), getGtkWindow(), GTK_FILE_CHOOSER_ACTION_SAVE, _("_Cancel"), GTK_RESPONSE_CANCEL,
+                _("_Save"), GTK_RESPONSE_ACCEPT, nullptr);
+
+        gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog), TRUE);
+        gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), "recording.json");
+
+        // Add JSON filter
+        GtkFileFilter* filter = gtk_file_filter_new();
+        gtk_file_filter_set_name(filter, _("JSON files"));
+        gtk_file_filter_add_pattern(filter, "*.json");
+        gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+
+        if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+            char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+            fs::path filepath(filename);
+            g_free(filename);
+
+            // Create image directory alongside the JSON file
+            fs::path imageDir = filepath.parent_path() / (filepath.stem().string() + "_images");
+
+            bool success = strokeRecorder->exportToJson(filepath, imageDir);
+            if (success) {
+                XojMsgBox::showMessageToUser(getGtkWindow(), _("Recording saved"),
+                                             FS(_F("Recording saved to {1}") % filepath.string()),
+                                             GTK_MESSAGE_INFO);
+            } else {
+                XojMsgBox::showErrorToUser(getGtkWindow(), _("Failed to save recording"));
+            }
+        }
+
+        gtk_widget_destroy(dialog);
     }
 }

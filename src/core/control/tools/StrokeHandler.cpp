@@ -10,6 +10,7 @@
 #include <gdk/gdk.h>  // for GdkEventKey
 
 #include "control/Control.h"                                // for Control
+#include "control/StrokeRecorder.h"                         // for StrokeRecorder
 #include "control/ToolEnums.h"                              // for DRAWING_TYPE_ST...
 #include "control/ToolHandler.h"                            // for ToolHandler
 #include "control/layer/LayerController.h"                  // for LayerController
@@ -121,6 +122,11 @@ void StrokeHandler::drawSegmentTo(const Point& point) {
 
     this->stroke->addPoint(this->hasPressure ? point : Point(point.x, point.y));
     this->viewPool->dispatch(xoj::view::StrokeToolView::ADD_POINT_REQUEST, this->stroke->getPointVector().back());
+
+    // Record the point
+    if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+        recorder->recordStrokePoint(point.x, point.y, this->hasPressure ? point.z : Point::NO_PRESSURE);
+    }
     return;
 }
 
@@ -165,6 +171,11 @@ void StrokeHandler::onButtonReleaseEvent(const PositionInputData& pos, double zo
         return;
     }
     finalizeStroke(pos.pressure);
+
+    // Record stroke end
+    if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+        recorder->recordStrokeEnd();
+    }
 
     Layer* layer = page->getSelectedLayer();
 
@@ -274,6 +285,12 @@ void StrokeHandler::onButtonPressEvent(const PositionInputData& pos, double zoom
 
     const double width = this->hasPressure ? pos.pressure * stroke->getWidth() : Point::NO_PRESSURE;
     stroke->addPoint(Point(this->buttonDownPoint.x, this->buttonDownPoint.y, width));
+
+    // Record stroke start
+    if (StrokeRecorder* recorder = control->getStrokeRecorder(); recorder && recorder->isRecording()) {
+        recorder->recordStrokeStart(stroke.get(), control->getCurrentPageNo());
+        recorder->recordStrokePoint(this->buttonDownPoint.x, this->buttonDownPoint.y, width);
+    }
 
     stabilizer->initialize(this, zoom, pos);
 }

@@ -849,6 +849,11 @@
      <attribute name="action">win.tex</attribute>
      <attribute name="accel">&lt;Ctrl&gt;&lt;Shift&gt;x</attribute>
     </item>
+    <item>
+     <attribute name="label" translatable="yes">Record Strokes</attribute>
+     <attribute name="action">win.stroke-recording</attribute>
+     <attribute name="accel">&lt;Ctrl&gt;&lt;Shift&gt;r</attribute>
+    </item>
    </section>
   </submenu>
   <submenu>
