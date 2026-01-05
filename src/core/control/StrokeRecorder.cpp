@@ -489,10 +489,20 @@ void StrokeRecorder::recordZOrderChange(const std::string& elementId, int newZOr
 
 std::string StrokeRecorder::findImageIdAtPosition(double x, double y, double tolerance) const {
     // Search from most recent to oldest (higher z-order first)
+    // Use a larger tolerance since selection bounds might not exactly match image position
+    double effectiveTolerance = std::max(tolerance, 50.0);
+    
     for (auto it = images.rbegin(); it != images.rend(); ++it) {
         const auto& img = *it;
-        if (x >= img.x - tolerance && x <= img.x + img.width + tolerance &&
-            y >= img.y - tolerance && y <= img.y + img.height + tolerance) {
+        // Check if the point is within or near the image bounds
+        // Also check if the point is at the image's origin (for selections)
+        bool withinBounds = (x >= img.x - effectiveTolerance && x <= img.x + img.width + effectiveTolerance &&
+                            y >= img.y - effectiveTolerance && y <= img.y + img.height + effectiveTolerance);
+        
+        // Also check for near-origin matches (selection may give us the origin point)
+        bool nearOrigin = (std::abs(x - img.x) < effectiveTolerance && std::abs(y - img.y) < effectiveTolerance);
+        
+        if (withinBounds || nearOrigin) {
             return img.id;
         }
     }

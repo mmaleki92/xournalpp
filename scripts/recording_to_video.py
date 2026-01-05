@@ -1005,8 +1005,15 @@ def generate_frames(recording: dict, image_dir: Path,
                 image_id = event.get("image_id", "")
                 for img in images:
                     if img.get("id") == image_id:
+                        # Copy base image info (filename, etc.)
                         visible_images[image_id] = img.copy()
+                        # But use position/size from the event (at time of add), not from images array (final state)
+                        visible_images[image_id]["x"] = event.get("x", img.get("x", 0))
+                        visible_images[image_id]["y"] = event.get("y", img.get("y", 0))
+                        visible_images[image_id]["width"] = event.get("width", img.get("width", 100))
+                        visible_images[image_id]["height"] = event.get("height", img.get("height", 100))
                         visible_images[image_id]["z_order"] = event.get("z_order", 0)
+                        visible_images[image_id]["rotation"] = 0  # Initial rotation is always 0
                         break
             
             elif event_type == "image_copy":
